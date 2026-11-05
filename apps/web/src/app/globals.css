@@ -1,0 +1,49 @@
+@import "tailwindcss";
+
+:root {
+  --bg-canvas: #f6f5f0;
+  --bg-surface: #efece6;
+  --bg-elevated: #ffffff;
+  --ink-primary: #111110;
+  --ink-secondary: #52514e;
+  --ink-muted: #787672;
+  --border-grid: #d4d1c8;
+  --border-strong: #111110;
+  --signal-vermilion: #d9381e;
+  --signal-amber: #b85d00;
+  --signal-emerald: #146c43;
+}
+
+* {
+  box-sizing: border-box;
+  border-radius: 0px;
+}
+
+html,
+body {
+  background-color: var(--bg-canvas);
+  color: var(--ink-primary);
+  font-family: var(--font-geist-sans), -apple-system, BlinkMacSystemFont,
+    "Helvetica Neue", Helvetica, Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+.font-mono-tabular {
+  font-family: var(--font-geist-mono), ui-monospace, SFMono-Regular, Menlo,
+    Monaco, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+.swiss-grid-border {
+  border-color: var(--border-grid);
+}
+
+.swiss-rule-top {
+  border-top: 2px solid var(--ink-primary);
+}
+
+.swiss-hairline-top {
+  border-top: 1px solid var(--border-grid);
+}
+

@@ -1,0 +1,43 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Next.js / Web build
+.next/
+out/
+build/
+dist/
+
+# WXT / Browser Extension
+.output/
+.wxt/
+
+# Testing
+coverage/
+playwright-report/
+test-results/
+
+# Environment & Secrets (NEVER COMMIT)
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+.env*.local
+
+# Firebase & Service Account Credentials (NEVER COMMIT)
+*firebase-adminsdk*.json
+*service-account*.json
+serviceAccountKey.json
+firebase-debug.log*
+firestore-debug.log*
+ui-debug.log*
+.firebase/
+
+# Misc
+.DS_Store
+*.pem
+*.tsbuildinfo
+next-env.d.ts
+

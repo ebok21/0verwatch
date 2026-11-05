@@ -1,0 +1,40 @@
+{
+  "name": "overwatch",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Overwatch — AI Research & Continuous Monitoring Layer for Prediction Markets",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "dev:mock": "npm run dev --workspace=@overwatch/web",
+    "dev:web": "npm run dev --workspace=@overwatch/web",
+    "dev:ext": "npm run dev --workspace=@overwatch/extension",
+    "dev:worker": "npm run worker:watch --workspace=@overwatch/web",
+    "mock:standalone": "npm run mock:market --workspace=@overwatch/web",
+    "worker": "npm run worker --workspace=@overwatch/web",
+    "build": "npm run build --workspace=@overwatch/shared && npm run build --workspace=@overwatch/web && npm run build --workspace=@overwatch/extension",
+    "build:web": "npm run build --workspace=@overwatch/shared && npm run build --workspace=@overwatch/web",
+    "build:ext": "npm run build --workspace=@overwatch/shared && npm run build --workspace=@overwatch/extension",
+    "start:web": "npm run start --workspace=@overwatch/web",
+    "seed": "npm run seed --workspace=@overwatch/web",
+    "verify:phase0": "npx tsx scripts/phase0-verify.ts",
+    "emulators": "firebase emulators:start --only firestore",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "npm run test:e2e --workspace=@overwatch/web",
+    "lint": "npm run lint --workspace=@overwatch/web",
+    "typecheck": "npm run typecheck --workspace=@overwatch/shared && npm run typecheck --workspace=@overwatch/web && npm run typecheck --workspace=@overwatch/extension"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "dotenv": "^16.4.7",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.5"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}

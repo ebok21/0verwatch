@@ -30,7 +30,10 @@ import {
 import { getAdminDb } from "../firebase-admin";
 import { getServerEnv } from "../env";
 import { logger } from "../logger";
-import { prepareMarketCricketData } from "../connectors/cricket-sportmonks";
+import {
+  prepareMarketCricketData,
+  fetchHistoricalCricketFixtures,
+} from "../connectors/cricket-sportmonks";
 
 function getOrchestratorModel(): string {
   try {
@@ -119,7 +122,17 @@ const SpecialistRawOutputSchema = z.preprocess(
       typeof obj.summary === "string" && obj.summary.trim()
         ? obj.summary.trim()
         : "Analysis completed.";
-    const claims = Array.isArray(obj.claims) ? obj.claims : [];
+    const rawClaims = Array.isArray(obj.claims)
+      ? obj.claims
+      : Array.isArray(obj.keyFactors)
+      ? obj.keyFactors
+      : [];
+    const claims = rawClaims
+      .map((c) => {
+        const res = ClaimSchema.safeParse(c);
+        return res.success ? res.data : null;
+      })
+      .filter((c): c is Claim => c !== null);
     const dataLimitations = Array.isArray(obj.dataLimitations)
       ? obj.dataLimitations.map((x) => (typeof x === "string" ? x : JSON.stringify(x)))
       : typeof obj.dataLimitations === "string"
@@ -182,14 +195,36 @@ const SergeantSynthesisRawSchema = z.preprocess(
       obj.summary = "Recon research synthesis completed.";
     }
 
-    if (!Array.isArray(obj.keyFactors)) {
-      obj.keyFactors = Array.isArray(obj.supportingClaims) ? obj.supportingClaims : [];
-    }
-    if (!Array.isArray(obj.risks)) {
-      obj.risks = Array.isArray(obj.contrarianClaims) ? obj.contrarianClaims : [];
-    }
+    const rawKeyFactors = Array.isArray(obj.keyFactors)
+      ? obj.keyFactors
+      : Array.isArray(obj.supportingClaims)
+      ? obj.supportingClaims
+      : [];
+    obj.keyFactors = rawKeyFactors
+      .map((item) => {
+        const res = ClaimSchema.safeParse(item);
+        return res.success ? res.data : null;
+      })
+      .filter((c): c is Claim => c !== null);
+
+    const rawRisks = Array.isArray(obj.risks)
+      ? obj.risks
+      : Array.isArray(obj.contrarianClaims)
+      ? obj.contrarianClaims
+      : [];
+    obj.risks = rawRisks
+      .map((item) => {
+        const res = ClaimSchema.safeParse(item);
+        return res.success ? res.data : null;
+      })
+      .filter((c): c is Claim => c !== null);
+
     if (!Array.isArray(obj.uncertainties)) {
       obj.uncertainties = typeof obj.uncertainties === "string" ? [obj.uncertainties] : [];
+    } else {
+      obj.uncertainties = obj.uncertainties.map((u) =>
+        typeof u === "string" ? u : JSON.stringify(u)
+      );
     }
 
     if (obj.monitoringPlan && typeof obj.monitoringPlan === "object") {
@@ -319,9 +354,23 @@ async function runDataSpecialist(params: {
     },
   });
 
-  const parsedRaw = SpecialistRawOutputSchema.parse(
-    extractJsonObject(loopResult.finalResponse.content)
-  );
+  let parsedRaw: z.infer<typeof SpecialistRawOutputSchema>;
+  try {
+    const rawJson = extractJsonObject(loopResult.finalResponse.content);
+    parsedRaw = SpecialistRawOutputSchema.parse(rawJson);
+  } catch (err) {
+    logger.warn(`[AGENT] Data Specialist parsing fallback triggered`, {
+      contentPreview: loopResult.finalResponse.content?.slice(0, 150),
+      error: err instanceof Error ? err.message : String(err),
+    });
+    parsedRaw = SpecialistRawOutputSchema.parse({
+      summary:
+        loopResult.finalResponse.content?.slice(0, 400) ||
+        "Data specialist match scorecard analysis completed.",
+      claims: [],
+      dataLimitations: [],
+    });
+  }
   const verifiedClaims = verifyAndSanitizeClaims(
     parsedRaw.claims,
     params.evidenceCollector,
@@ -382,18 +431,38 @@ async function runIntelligenceSpecialist(params: {
             task: params.taskObjective,
             marketId: params.market.marketId,
             question: params.market.question,
+            matchTitle: params.market.resolutionContext?.matchTitle ?? `${params.market.homeTeam} vs ${params.market.awayTeam} ${params.market.matchFormat}`,
+            competition: params.market.competition,
             homeTeam: params.market.homeTeam,
             awayTeam: params.market.awayTeam,
+            matchDate: params.market.matchDate,
+            matchFormat: params.market.matchFormat,
             venue: params.market.resolutionContext?.venue ?? "N/A",
+            scheduledStartTime: params.market.scheduledStartTime,
+            criticalInstruction: `Target match is ${params.market.resolutionContext?.matchTitle ?? params.market.matchFormat} on ${params.market.matchDate} at ${params.market.resolutionContext?.venue ?? 'scheduled venue'}. Do NOT confuse this match with previous matches in this series. Ensure all search queries include "${params.market.resolutionContext?.matchTitle ?? ''} ${params.market.matchDate}".`,
           }),
         },
       ],
     },
   });
 
-  const parsedRaw = SpecialistRawOutputSchema.parse(
-    extractJsonObject(loopResult.finalResponse.content)
-  );
+  let parsedRaw: z.infer<typeof SpecialistRawOutputSchema>;
+  try {
+    const rawJson = extractJsonObject(loopResult.finalResponse.content);
+    parsedRaw = SpecialistRawOutputSchema.parse(rawJson);
+  } catch (err) {
+    logger.warn(`[AGENT] Data Specialist parsing fallback triggered`, {
+      contentPreview: loopResult.finalResponse.content?.slice(0, 150),
+      error: err instanceof Error ? err.message : String(err),
+    });
+    parsedRaw = SpecialistRawOutputSchema.parse({
+      summary:
+        loopResult.finalResponse.content?.slice(0, 400) ||
+        "Data specialist match scorecard analysis completed.",
+      claims: [],
+      dataLimitations: [],
+    });
+  }
   const verifiedClaims = verifyAndSanitizeClaims(
     parsedRaw.claims,
     params.evidenceCollector,
@@ -425,6 +494,11 @@ async function runIntelligenceSpecialist(params: {
 // In-memory cache for recent recon runs
 const inMemoryReconReports = new Map<string, ReconReport>();
 const inFlightRecons = new Map<string, Promise<ReconReport>>();
+
+export function clearAllReconData(): void {
+  inMemoryReconReports.clear();
+  inFlightRecons.clear();
+}
 
 /**
  * Executes the full Overwatch Cricket Recon workflow:
@@ -486,6 +560,36 @@ export async function executeReconWorkflow(params: {
       logger.info(`[SPORTMONKS] Fixture data pre-fetched | fixtureId=${params.market.fixtureId}`);
     }
 
+    // 1b. Fetch historical completed fixtures in the series for empirical comparisons
+    try {
+      const historicalFixtures = await fetchHistoricalCricketFixtures({
+        currentFixtureId: params.market.fixtureId,
+        targetOver: 15,
+        limit: 2,
+      });
+
+      for (const hist of historicalFixtures) {
+        const innSummary = hist.innings
+          .map((inn) => `${inn.teamName}: ${inn.score}/${inn.wickets} (${inn.overs} ov)`)
+          .join(" vs ");
+        const summaryText = `${hist.title} [${hist.status}]. Result: ${hist.resultNote || "N/A"}. Scorecards: ${innSummary}.${
+          hist.targetOverSummary ? ` ${hist.targetOverSummary}` : ""
+        }`;
+
+        evidenceCollector.addRecord({
+          toolOperation: "cricket.get_fixture_data",
+          sourceUrlOrOrigin: hist.sourceUrlOrOrigin,
+          title: `Historical Sportmonks Fixture #${hist.fixtureId} (${hist.title})`,
+          summary: summaryText,
+          extractedData: hist,
+        });
+      }
+    } catch (histErr) {
+      logger.warn("[SPORTMONKS] Historical fixture pre-fetch warning", {
+        error: histErr instanceof Error ? histErr.message : String(histErr),
+      });
+    }
+
     // 2. Sergeant Planning
     const planRes = await params.provider.complete({
       model: getOrchestratorModel(),
@@ -513,9 +617,13 @@ export async function executeReconWorkflow(params: {
     totalTokens += planRes.usage?.totalTokens ?? 0;
     totalCostUsd += planRes.usage?.estimatedCostUsd ?? 0;
 
-    const plan = SergeantPlanOutputSchema.parse(
-      extractJsonObject(planRes.content)
-    );
+    let planJson: unknown;
+    try {
+      planJson = extractJsonObject(planRes.content);
+    } catch {
+      planJson = {};
+    }
+    const plan = SergeantPlanOutputSchema.parse(planJson);
 
     // 3. Parallel execution of Data & Intelligence Specialists
     logger.info("[AGENT] Data Specialist started");
@@ -623,9 +731,39 @@ export async function executeReconWorkflow(params: {
     totalTokens += synthesisRes.usage?.totalTokens ?? 0;
     totalCostUsd += synthesisRes.usage?.estimatedCostUsd ?? 0;
 
-    const rawSynthesis = SergeantSynthesisRawSchema.parse(
-      extractJsonObject(synthesisRes.content)
-    );
+    let rawSynthesisObj: unknown;
+    try {
+      rawSynthesisObj = extractJsonObject(synthesisRes.content);
+    } catch {
+      rawSynthesisObj = {
+        headline: "Match Synthesis",
+        summary:
+          synthesisRes.content?.slice(0, 500) ||
+          "Cricket match recon research synthesis completed.",
+        assessment: "INCONCLUSIVE",
+        keyFactors: [],
+        risks: [],
+        uncertainties: [],
+      };
+    }
+
+    const synthesisParsed = SergeantSynthesisRawSchema.safeParse(rawSynthesisObj);
+    const rawSynthesis = synthesisParsed.success
+      ? synthesisParsed.data
+      : {
+          headline: "Match Synthesis",
+          summary:
+            typeof (rawSynthesisObj as any)?.summary === "string"
+              ? (rawSynthesisObj as any).summary
+              : synthesisRes.content?.slice(0, 500) ||
+                "Cricket match recon research synthesis completed.",
+          assessment: "INCONCLUSIVE" as const,
+          yesProbability: null,
+          keyFactors: [],
+          risks: [],
+          uncertainties: [],
+          monitoringPlan: undefined,
+        };
 
     const verifiedKeyFactors = verifyAndSanitizeClaims(
       rawSynthesis.keyFactors,
@@ -774,15 +912,20 @@ export async function getLatestReconReportForMarket(
     const snap = await db
       .collection("recon_runs")
       .where("marketId", "==", marketId)
-      .orderBy("createdAt", "desc")
-      .limit(1)
       .get();
 
-    if (!snap.empty && snap.docs[0]) {
-      const parsed = ReconReportSchema.safeParse(snap.docs[0].data());
-      if (parsed.success) {
-        inMemoryReconReports.set(marketId, parsed.data);
-        return parsed.data;
+    if (!snap.empty) {
+      const parsedReports = snap.docs
+        .map((d) => {
+          const res = ReconReportSchema.safeParse(d.data());
+          return res.success ? res.data : null;
+        })
+        .filter((r): r is ReconReport => r !== null)
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+
+      if (parsedReports[0]) {
+        inMemoryReconReports.set(marketId, parsedReports[0]);
+        return parsedReports[0];
       }
     }
   } catch {

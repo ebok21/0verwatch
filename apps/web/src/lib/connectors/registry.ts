@@ -336,17 +336,34 @@ export class ToolRegistry {
 
       case "web.search": {
         const args = WebSearchArgsSchema.parse(parsedJson);
+        let effectiveQuery = args.query.trim();
+        if (this.options?.activeMarket) {
+          const m = this.options.activeMarket;
+          const matchTitle = m.resolutionContext?.matchTitle;
+          const matchDate = m.matchDate;
+          if (matchTitle && !effectiveQuery.toLowerCase().includes(matchTitle.toLowerCase())) {
+            effectiveQuery = `${effectiveQuery} ${matchTitle}`;
+          }
+          if (matchDate && !effectiveQuery.includes(matchDate) && !effectiveQuery.toLowerCase().includes("2026")) {
+            effectiveQuery = `${effectiveQuery} ${matchDate}`;
+          }
+        }
+        // Ensure web intelligence query targets verified news media coverage & real-time updates
+        const lowerQ = effectiveQuery.toLowerCase();
+        if (!lowerQ.includes("latest news") && !lowerQ.includes("news update")) {
+          effectiveQuery = `${effectiveQuery} latest news update`;
+        }
         const searchRes = await executeWebSearch({
-          query: args.query,
+          query: effectiveQuery,
           maxResults: args.maxResults,
         });
         const primaryUrl =
-          searchRes.results[0]?.url ?? `tavily://search?q=${encodeURIComponent(args.query)}`;
+          searchRes.results[0]?.url ?? `tavily://search?q=${encodeURIComponent(effectiveQuery)}`;
         const record = this.evidenceCollector.addRecord({
           toolOperation: "web.search",
           sourceUrlOrOrigin: primaryUrl,
-          title: `Web Search: "${args.query}"`,
-          summary: `Retrieved ${searchRes.results.length} web intelligence results via Tavily.`,
+          title: `Web Search: "${effectiveQuery}"`,
+          summary: `Retrieved ${searchRes.results.length} web intelligence results via Tavily for "${effectiveQuery}".`,
           extractedData: searchRes,
         });
         return {

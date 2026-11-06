@@ -94,9 +94,22 @@ export async function POST(req: NextRequest) {
 
     return jsonResponse({ report });
   } catch (err) {
-    logger.error("[API /api/recon] Workflow error", {
+    logger.error("[API /api/recon] Workflow execution error", {
       error: err instanceof Error ? err.message : String(err),
     });
+    if (err instanceof z.ZodError) {
+      const issueSummary = err.issues
+        .map((i) => `${i.path.join(".") || "root"}: ${i.message}`)
+        .join("; ");
+      return jsonResponse(
+        {
+          error: "RECON_WORKFLOW_ERROR",
+          message: `Recon workflow schema processing error: ${issueSummary}`,
+          issues: err.issues,
+        },
+        500
+      );
+    }
     return errorResponse(err);
   }
 }

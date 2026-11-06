@@ -153,13 +153,18 @@ export async function listPaperPositions(params: {
       }
     }
   } catch {
-    // Fall back to memory
-    for (const pos of memoryPositions.values()) {
-      if (params.userId && pos.userId !== params.userId) continue;
-      if (params.marketId && pos.marketId !== params.marketId) continue;
-      if (params.status && pos.status !== params.status) continue;
-      results.push(pos);
-    }
+    // Offline or test mode fallback
+  }
+
+  // Merge in-memory registry to guarantee instant visibility
+  const seen = new Set<string>(results.map((r) => r.positionId));
+  for (const pos of memoryPositions.values()) {
+    if (seen.has(pos.positionId)) continue;
+    if (params.userId && pos.userId !== params.userId) continue;
+    if (params.marketId && pos.marketId !== params.marketId) continue;
+    if (params.status && pos.status !== params.status) continue;
+    results.push(pos);
+    seen.add(pos.positionId);
   }
 
   return results.sort((a, b) => b.openedAt.localeCompare(a.openedAt));

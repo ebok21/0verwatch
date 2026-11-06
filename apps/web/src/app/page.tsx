@@ -14,7 +14,7 @@ export default async function MarketDirectoryPage() {
           <div className="flex items-center gap-3">
             <span className="inline-block w-3 h-3 bg-[#B85D00]" />
             <span className="font-mono-tabular font-bold tracking-[0.2em] text-sm uppercase">
-              OVERWATCH // DEMO MARKET & PAPER TRADING
+              0VERWATCH // DEMO MARKET & PAPER TRADING
             </span>
           </div>
 
@@ -36,7 +36,7 @@ export default async function MarketDirectoryPage() {
             Available Cricket Prediction Markets
           </h1>
           <p className="mt-2 text-sm text-[#52514E]">
-            Minimal demo prediction-market environment for testing Overwatch continuous monitoring and paper position registration.
+            Minimal demo prediction-market environment for testing 0verwatch continuous monitoring and paper position registration.
           </p>
         </div>
 

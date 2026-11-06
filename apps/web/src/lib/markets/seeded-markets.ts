@@ -1,12 +1,123 @@
 import { MarketMetadata } from "@overwatch/shared";
 
 /**
- * Canonical seeded demonstration markets for Overwatch MVP.
- * Verified via Sportmonks Cricket API v2.0:
- * - Fixture #71020: New Zealand vs India, 2nd ODI (2026-11-07T02:00:00Z)
- * - Fixture #71019: New Zealand vs India, 1st ODI at Eden Park, Auckland
+ * Canonical seeded demonstration markets for 0verwatch MVP.
+ * Two active market wagers:
+ * 1. ind-nz-match-winner: "Will India win against New Zealand?"
+ * 2. ind-nz-opening-3-overs-20: "Will the opening team score more than 20 runs in the first 3 overs?"
  */
 export const SEEDED_MARKETS: Record<string, MarketMetadata> = {
+  "ind-nz-match-winner": {
+    marketId: "ind-nz-match-winner",
+    platform: "demo",
+    question: "Will India win against New Zealand?",
+    subtitle: "India vs. New Zealand — 2nd ODI • Match Winner",
+    category: "CRICKET",
+    status: "OPEN",
+    competition: "International ODI Series",
+    homeTeam: "New Zealand",
+    awayTeam: "India",
+    matchDate: "2026-11-07",
+    scheduledStartTime: "2026-11-07T02:00:00Z",
+    matchFormat: "ODI",
+    fixtureId: 71020,
+    marketType: "MATCH_WINNER",
+    openingTime: "2026-11-06T10:00:00Z",
+    expectedResolutionTime: "2026-11-07T10:00:00Z",
+    minimumResolutionHorizonMinutes: 10,
+    resolutionCriteria:
+      "Resolves YES if India is declared the winner of the 2nd ODI against New Zealand by official match referee. Resolves NO if New Zealand wins or match concludes in New Zealand's favor.",
+    closingTime: "2026-11-07T10:00:00Z",
+    targetEventWindow: "Full Match • 2nd ODI",
+    resolutionContext: {
+      matchTitle: "New Zealand vs. India — 2nd ODI",
+      venue: "Seddon Park / Eden Park Series Venue, New Zealand",
+      scheduledStart: "2026-11-07T02:00:00Z",
+      battingTeam: "India",
+      bowlingTeam: "New Zealand",
+      voidConditions: [
+        "Market resolves VOID if match is abandoned without a certified official result (e.g. DLS).",
+      ],
+      officialSource: "Sportmonks Cricket API v2.0 (Fixture #71020)",
+    },
+    verifiedFixtureMeta: {
+      fixtureId: 71020,
+      homeTeam: "New Zealand",
+      awayTeam: "India",
+      startingAt: "2026-11-07T02:00:00Z",
+      format: "ODI",
+      venue: "Seddon Park / Eden Park Series Venue",
+      status: "NS",
+      competition: "International ODI Series",
+      verifiedAt: "2026-11-06T00:00:00Z",
+    },
+    createdAt: "2026-11-06T00:00:00Z",
+    updatedAt: "2026-11-06T00:00:00Z",
+  },
+  "ind-nz-opening-3-overs-20": {
+    marketId: "ind-nz-opening-3-overs-20",
+    platform: "demo",
+    question: "Will the opening team score more than 20 runs in the first 3 overs?",
+    subtitle: "India vs. New Zealand — 2nd ODI • Opening Powerplay Phase (Overs 1 to 3)",
+    category: "CRICKET",
+    status: "OPEN",
+    competition: "International ODI Series",
+    homeTeam: "New Zealand",
+    awayTeam: "India",
+    matchDate: "2026-11-07",
+    scheduledStartTime: "2026-11-07T02:00:00Z",
+    matchFormat: "ODI",
+    fixtureId: 71020,
+    marketType: "OVER_RUNS",
+    openingTime: "2026-11-06T10:00:00Z",
+    expectedResolutionTime: "2026-11-07T05:30:00Z",
+    minimumResolutionHorizonMinutes: 10,
+    resolutionCriteria:
+      "Resolves YES if the opening batting team scores more than 20 total runs (21 or more runs, including all extras) across the first 3 overs of the 1st Innings. Resolves NO if 20 or fewer runs are scored.",
+    closingTime: "2026-11-07T05:30:00Z",
+    targetEventWindow: "1st Innings • Overs #1 – #3 (18 legal deliveries)",
+    resolutionContext: {
+      matchTitle: "New Zealand vs. India — One Day International Series (2nd ODI)",
+      venue: "Seddon Park / Eden Park Series Venue, New Zealand",
+      scheduledStart: "2026-11-07T02:00:00Z",
+      inningsNumber: 1,
+      battingTeam: "India",
+      bowlingTeam: "New Zealand",
+      targetOvers: [1, 2, 3],
+      runThreshold: 20,
+      includesAllExtras: true,
+      extrasIncludedList: [
+        "Wides (wd)",
+        "No-Balls (nb)",
+        "Byes (b)",
+        "Leg-Byes (lb)",
+        "Penalty Runs",
+      ],
+      voidConditions: [
+        "Market resolves VOID if the 1st Innings terminates before 3 overs are completed, unless more than 20 runs were already scored.",
+      ],
+      officialSource: "Sportmonks Cricket API v2.0 (Fixture #71020)",
+    },
+    verifiedFixtureMeta: {
+      fixtureId: 71020,
+      homeTeam: "New Zealand",
+      awayTeam: "India",
+      startingAt: "2026-11-07T02:00:00Z",
+      format: "ODI",
+      venue: "Seddon Park / Eden Park Series Venue",
+      status: "NS",
+      competition: "International ODI Series",
+      verifiedAt: "2026-11-06T00:00:00Z",
+    },
+    createdAt: "2026-11-06T00:00:00Z",
+    updatedAt: "2026-11-06T00:00:00Z",
+  },
+};
+
+/**
+ * Legacy markets preserved strictly for unit test suite backwards compatibility.
+ */
+export const LEGACY_TEST_MARKETS: Record<string, MarketMetadata> = {
   "ind-nz-over-15": {
     marketId: "ind-nz-over-15",
     platform: "demo",
@@ -123,53 +234,6 @@ export const SEEDED_MARKETS: Record<string, MarketMetadata> = {
     createdAt: "2026-11-06T00:00:00Z",
     updatedAt: "2026-11-06T00:00:00Z",
   },
-  "ind-nz-match-winner": {
-    marketId: "ind-nz-match-winner",
-    platform: "demo",
-    question: "Will India win the 2nd ODI against New Zealand?",
-    subtitle: "New Zealand vs. India — 2nd ODI • Match Winner",
-    category: "CRICKET",
-    status: "OPEN",
-    competition: "International ODI Series",
-    homeTeam: "New Zealand",
-    awayTeam: "India",
-    matchDate: "2026-11-07",
-    scheduledStartTime: "2026-11-07T02:00:00Z",
-    matchFormat: "ODI",
-    fixtureId: 71020,
-    marketType: "MATCH_WINNER",
-    openingTime: "2026-11-06T10:00:00Z",
-    expectedResolutionTime: "2026-11-07T10:00:00Z",
-    minimumResolutionHorizonMinutes: 10,
-    resolutionCriteria:
-      "Resolves YES if India is declared the winner of the 2nd ODI by official match referee. Resolves NO if New Zealand wins.",
-    closingTime: "2026-11-07T10:00:00Z",
-    targetEventWindow: "Full Match • 2nd ODI",
-    resolutionContext: {
-      matchTitle: "New Zealand vs. India — 2nd ODI",
-      venue: "Seddon Park / Eden Park Series Venue, New Zealand",
-      scheduledStart: "2026-11-07T02:00:00Z",
-      battingTeam: "India",
-      bowlingTeam: "New Zealand",
-      voidConditions: [
-        "Market resolves VOID if match is abandoned without a certified result (e.g. DLS).",
-      ],
-      officialSource: "Sportmonks Cricket API v2.0 (Fixture #71020)",
-    },
-    verifiedFixtureMeta: {
-      fixtureId: 71020,
-      homeTeam: "New Zealand",
-      awayTeam: "India",
-      startingAt: "2026-11-07T02:00:00Z",
-      format: "ODI",
-      venue: "Seddon Park / Eden Park Series Venue",
-      status: "NS",
-      competition: "International ODI Series",
-      verifiedAt: "2026-11-06T00:00:00Z",
-    },
-    createdAt: "2026-11-06T00:00:00Z",
-    updatedAt: "2026-11-06T00:00:00Z",
-  },
   "ind-nz-1st-odi-over-15": {
     marketId: "ind-nz-1st-odi-over-15",
     platform: "demo",
@@ -231,7 +295,7 @@ export const SEEDED_MARKETS: Record<string, MarketMetadata> = {
 };
 
 export function getSeededMarketById(marketId: string): MarketMetadata | null {
-  return SEEDED_MARKETS[marketId] ?? null;
+  return SEEDED_MARKETS[marketId] ?? LEGACY_TEST_MARKETS[marketId] ?? null;
 }
 
 export function listSeededMarkets(): MarketMetadata[] {

@@ -47,6 +47,20 @@ export async function POST(
   }
 }
 
+export async function DELETE(
+  req: NextRequest,
+  context: { params: Promise<{ positionId: string }> }
+) {
+  try {
+    const { positionId } = await context.params;
+    const user = await resolveRequestOrDevUser(req);
+    const closed = await closePaperPosition(positionId, user.userId);
+    return jsonResponse(closed);
+  } catch (err) {
+    return errorResponse(err);
+  }
+}
+
 export async function PATCH(
   req: NextRequest,
   context: { params: Promise<{ positionId: string }> }

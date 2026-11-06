@@ -144,6 +144,17 @@ function renderLightMarketHtml(market: any, currentHost: string, currentPort: nu
           <button id="btn-submit-position" type="button" class="w-full py-3 bg-[#111110] hover:bg-[#52514E] text-white mono text-xs font-bold uppercase tracking-wider">
             OPEN POSITION & ACTIVATE SENTRY
           </button>
+
+          <!-- Registered Positions for this Market -->
+          <div class="mt-6 border-t border-[#D4D1C8] pt-4 space-y-3">
+            <div class="flex justify-between items-center">
+              <span class="mono text-xs font-bold uppercase text-[#52514E]">OPEN POSITIONS FOR THIS MARKET</span>
+              <button id="btn-refresh-positions" type="button" class="mono text-[10px] text-[#52514E] hover:text-[#111110] underline">Refresh</button>
+            </div>
+            <div id="positions-container" class="space-y-2 mono text-xs">
+              <div class="text-[#88857E] py-2 text-center">Loading positions...</div>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -156,6 +167,7 @@ function renderLightMarketHtml(market: any, currentHost: string, currentPort: nu
     const stakeInput = document.getElementById("stake-input");
     const submitBtn = document.getElementById("btn-submit-position");
     const feedback = document.getElementById("position-feedback");
+    const btnRefresh = document.getElementById("btn-refresh-positions");
 
     btnYes.addEventListener("click", () => {
       selectedSide = "YES";
@@ -169,33 +181,123 @@ function renderLightMarketHtml(market: any, currentHost: string, currentPort: nu
       btnYes.className = "py-2.5 px-4 mono text-sm font-bold border-2 border-[#D4D1C8] bg-[#F6F5F0] text-[#111110]";
     });
 
+    async function loadPositions() {
+      const container = document.getElementById("positions-container");
+      try {
+        const res = await fetch("http://127.0.0.1:3000/api/positions?marketId=${market.marketId}");
+        if (!res.ok) throw new Error("HTTP " + res.status);
+        const data = await res.json();
+        const positions = data.positions || [];
+        if (positions.length === 0) {
+          container.innerHTML = '<div class="text-[#88857E] py-2 text-center">No positions for this market yet.</div>';
+          return;
+        }
+        container.innerHTML = positions.map(function(pos) {
+          var sideColor = pos.side === 'YES' ? 'bg-[#146C43]' : 'bg-[#D9381E]';
+          var actionBtn = pos.status === 'OPEN'
+            ? '<button onclick="closePosition(\'' + pos.positionId + '\')" class="px-2.5 py-1 border border-[#D9381E] text-[#D9381E] hover:bg-[#D9381E] hover:text-white font-bold text-[10px] transition-colors">CLOSE POSITION</button>'
+            : '<span class="text-[10px] text-[#88857E]">Closed</span>';
+          return '<div class="p-2.5 border border-[#D4D1C8] bg-[#FBFBFA] flex items-center justify-between gap-2">' +
+            '<div class="flex items-center gap-2">' +
+              '<span class="px-2 py-0.5 text-white font-bold text-[10px] ' + sideColor + '">' + pos.side + '</span>' +
+              '<span class="font-bold text-[#111110]">$' + pos.stake + '</span>' +
+              '<span class="text-[10px] text-[#52514E]">(' + pos.status + ')</span>' +
+            '</div>' +
+            actionBtn +
+          '</div>';
+        }).join('');
+      } catch (e) {
+        container.innerHTML = '<div class="text-[#88857E] py-1 text-center">Could not load positions.</div>';
+      }
+    }
+
+    window.closePosition = async function(posId) {
+      try {
+        const res = await fetch("http://127.0.0.1:3000/api/positions/" + encodeURIComponent(posId), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ action: "close" })
+        });
+        if (res.ok) {
+          const updated = await res.json();
+          window.postMessage({
+            source: "OVERWATCH_DEMO_MARKET",
+            type: "OVERWATCH_POSITION_UPDATED",
+            payload: {
+              positionId: updated.positionId,
+              marketId: "${market.marketId}",
+              fixtureId: ${market.fixtureId ?? 71020},
+              side: updated.side,
+              stake: updated.stake,
+              status: "CLOSED",
+              action: "CLOSED"
+            }
+          }, window.location.origin);
+          await loadPositions();
+        } else {
+          alert("Error closing position.");
+        }
+      } catch {
+        alert("Failed to connect to backend to close position.");
+      }
+    };
+
+    btnRefresh.addEventListener("click", loadPositions);
+    loadPositions();
+
     submitBtn.addEventListener("click", async () => {
       submitBtn.disabled = true;
       submitBtn.innerText = "OPENING POSITION...";
       feedback.className = "hidden";
 
       const stake = Number(stakeInput.value) || 50;
-      const payload = {
-        positionId: "pos-" + Date.now(),
-        marketId: "${market.marketId}",
-        fixtureId: ${market.fixtureId ?? 71020},
-        side: selectedSide,
-        stake: stake,
-        status: "OPEN",
-        reconRunId: "recon-${market.marketId}-initial",
-        action: "OPENED"
-      };
 
       try {
-        // Post message for extension content script
+        const res = await fetch("http://127.0.0.1:3000/api/positions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            marketId: "${market.marketId}",
+            side: selectedSide,
+            stake: stake,
+          }),
+        });
+
+        let actualPos = { positionId: "pos-" + Date.now() };
+        if (res.ok) {
+          const resData = await res.json();
+          actualPos = resData.position || resData;
+        }
+
+        await fetch("http://127.0.0.1:3000/api/watch", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "TRACK",
+            marketId: "${market.marketId}",
+            activeSide: selectedSide,
+            authorizedBackgroundInference: true,
+          }),
+        }).catch(() => {});
+
         window.postMessage({
           source: "OVERWATCH_DEMO_MARKET",
           type: "OVERWATCH_POSITION_UPDATED",
-          payload: payload
+          payload: {
+            positionId: actualPos.positionId,
+            marketId: "${market.marketId}",
+            fixtureId: ${market.fixtureId ?? 71020},
+            side: selectedSide,
+            stake: stake,
+            status: "OPEN",
+            reconRunId: "recon-${market.marketId}-initial",
+            action: "OPENED"
+          }
         }, window.location.origin);
 
         feedback.className = "p-3 bg-[#E8F5E9] border border-[#146C43] text-[#146C43] mono text-xs";
         feedback.innerText = "✓ Paper position opened (" + selectedSide + " • $" + stake + "). Guard Watch activated.";
+        await loadPositions();
       } catch (err) {
         feedback.className = "p-3 bg-[#FFEBEE] border border-[#D9381E] text-[#D9381E] mono text-xs";
         feedback.innerText = "Error opening position.";
@@ -214,7 +316,7 @@ function renderIndexHtml(markets: any[], currentHost: string, currentPort: numbe
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Demo Markets — Overwatch Paper Trading</title>
+  <title>Demo Markets — 0verwatch Paper Trading</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <style>
     body { background-color: #F6F5F0; color: #111110; font-family: ui-sans-serif, system-ui, sans-serif; }

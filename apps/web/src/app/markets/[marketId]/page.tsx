@@ -136,13 +136,13 @@ export default async function MarketDetailPage({
                 <div>
                   <span className="text-[#52514E] block">OPENING TIME:</span>
                   <span className="font-bold text-[#111110]">
-                    {new Date(market.openingTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    {market.openingTime.replace("T", " ").replace("Z", " UTC")}
                   </span>
                 </div>
                 <div>
                   <span className="text-[#52514E] block">EXPECTED RESOLUTION:</span>
                   <span className="font-bold text-[#111110]">
-                    {new Date(market.expectedResolutionTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    {market.expectedResolutionTime.replace("T", " ").replace("Z", " UTC")}
                   </span>
                 </div>
               </div>

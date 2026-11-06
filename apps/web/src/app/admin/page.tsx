@@ -189,7 +189,7 @@ export default function AdminMarketManagementPage() {
             ← BACK TO MARKETS
           </Link>
           <span className="font-mono-tabular font-bold tracking-wider text-sm uppercase">
-            OVERWATCH // ADMIN MARKET MANAGEMENT
+            0VERWATCH // ADMIN MARKET MANAGEMENT
           </span>
         </div>
       </header>
@@ -330,6 +330,8 @@ export default function AdminMarketManagementPage() {
                 <option value="INNINGS_TOTAL">INNINGS_TOTAL</option>
                 <option value="PLAYER_RUNS">PLAYER_RUNS</option>
                 <option value="PLAYER_WICKETS">PLAYER_WICKETS</option>
+                <option value="PHASE_RUNS">PHASE_RUNS</option>
+                <option value="CUSTOM_CRICKET">CUSTOM_CRICKET</option>
               </select>
             </div>
 

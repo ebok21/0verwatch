@@ -23,26 +23,55 @@ export type MatchFormat = z.infer<typeof MatchFormatSchema>;
 
 export const CricketMarketTypeSchema = z.enum([
   "OVER_RUNS",
-  "PHASE_RUNS",
-  "INNINGS_RUNS",
   "MATCH_WINNER",
+  "INNINGS_TOTAL",
+  "INNINGS_RUNS",
+  "PLAYER_RUNS",
+  "PLAYER_WICKETS",
   "PLAYER_PERFORMANCE",
+  "PHASE_RUNS",
   "WICKETS",
   "CUSTOM_CRICKET",
 ]);
 export type CricketMarketType = z.infer<typeof CricketMarketTypeSchema>;
 
-export const VerifiedFixtureMetaSchema = z.object({
-  fixtureId: z.number().int().positive(),
-  homeTeam: z.string().min(1),
-  awayTeam: z.string().min(1),
-  startingAt: z.string().min(1),
-  format: z.string().min(1),
-  venue: z.string().min(1),
-  status: z.string().min(1),
-  competition: z.string().optional(),
-  verifiedAt: z.string(),
-});
+export const VerifiedFixtureMetaSchema = z.preprocess(
+  (raw: unknown) => {
+    if (!raw || typeof raw !== "object") return {};
+    const obj = raw as Record<string, unknown>;
+    const startingAt =
+      typeof obj.startingAt === "string" && obj.startingAt.trim()
+        ? obj.startingAt.trim()
+        : typeof obj.scheduledStartTime === "string" && obj.scheduledStartTime.trim()
+        ? obj.scheduledStartTime.trim()
+        : new Date().toISOString();
+    const format =
+      typeof obj.format === "string" && obj.format.trim()
+        ? obj.format.trim()
+        : typeof obj.matchFormat === "string" && obj.matchFormat.trim()
+        ? obj.matchFormat.trim()
+        : "ODI";
+    return {
+      ...obj,
+      startingAt,
+      format,
+    };
+  },
+  z.object({
+    fixtureId: z.number().int().positive(),
+    homeTeam: z.string().min(1),
+    awayTeam: z.string().min(1),
+    startingAt: z.string().min(1),
+    scheduledStartTime: z.string().optional(),
+    matchDate: z.string().optional(),
+    format: z.string().min(1),
+    matchFormat: z.string().optional(),
+    venue: z.string().min(1),
+    status: z.string().min(1),
+    competition: z.string().optional(),
+    verifiedAt: z.string(),
+  })
+);
 export type VerifiedFixtureMeta = z.infer<typeof VerifiedFixtureMetaSchema>;
 
 export const MarketStatusSchema = z.enum([

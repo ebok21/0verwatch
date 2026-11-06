@@ -369,11 +369,14 @@ export async function validateSportmonksFixtureById(
       fixtureId,
       homeTeam,
       awayTeam,
-      matchDate,
+      startingAt: scheduledStartTime,
       scheduledStartTime,
+      matchDate,
+      format: matchFormat,
       matchFormat,
       venue: venueName,
       status,
+      competition: asString(league.name, "International Cricket"),
       verifiedAt: new Date().toISOString(),
     });
 
@@ -434,9 +437,19 @@ export async function prepareMarketCricketData(params: {
 
   // Choose minimal allowlisted includes based on market type
   let includes = ["localteam", "visitorteam", "runs", "venue"];
-  if (marketType === "OVER_RUNS" || marketType === "INNINGS_TOTAL") {
+  if (
+    marketType === "OVER_RUNS" ||
+    marketType === "INNINGS_TOTAL" ||
+    marketType === "INNINGS_RUNS" ||
+    marketType === "PHASE_RUNS"
+  ) {
     includes = ["localteam", "visitorteam", "runs", "batting", "balls", "venue"];
-  } else if (marketType === "PLAYER_RUNS" || marketType === "PLAYER_WICKETS") {
+  } else if (
+    marketType === "PLAYER_RUNS" ||
+    marketType === "PLAYER_WICKETS" ||
+    marketType === "PLAYER_PERFORMANCE" ||
+    marketType === "WICKETS"
+  ) {
     includes = ["localteam", "visitorteam", "lineup", "batting", "bowling", "balls"];
   } else if (marketType === "MATCH_WINNER") {
     includes = ["localteam", "visitorteam", "runs", "venue", "league"];
@@ -566,4 +579,124 @@ export async function fetchSportmonksFixtureData(params: {
     sourceUrlOrOrigin: publicOrigin,
     unavailableReason: `Sportmonks fixture #${params.fixtureId} could not be retrieved from provider API.`,
   };
+}
+
+export interface HistoricalFixtureData {
+  fixtureId: number;
+  title: string;
+  matchDate: string;
+  status: string;
+  resultNote: string | null;
+  innings: Array<{
+    inningNumber: number;
+    teamName: string;
+    score: number;
+    wickets: number;
+    overs: number;
+  }>;
+  targetOverSummary?: string;
+  sourceUrlOrOrigin: string;
+}
+
+const historicalFixtureCache = new Map<number, HistoricalFixtureData[]>();
+
+/**
+ * Pre-fetches prior completed fixtures in the series from Sportmonks v2.0
+ * and extracts historical over-by-over milestones, runs, and team outcomes.
+ */
+export async function fetchHistoricalCricketFixtures(params: {
+  currentFixtureId: number;
+  targetOver?: number;
+  limit?: number;
+}): Promise<HistoricalFixtureData[]> {
+  const { currentFixtureId, targetOver = 15, limit = 2 } = params;
+  if (historicalFixtureCache.has(currentFixtureId)) {
+    return historicalFixtureCache.get(currentFixtureId)!;
+  }
+
+  const env = getServerEnv();
+  const apiToken = env.SPORTMONKS_API_TOKEN;
+  if (!apiToken) return [];
+
+  const results: HistoricalFixtureData[] = [];
+  const candidateIds: number[] = [];
+  for (let i = 1; i <= Math.min(limit, 3); i++) {
+    candidateIds.push(currentFixtureId - i);
+  }
+
+  for (const histId of candidateIds) {
+    if (histId <= 0) continue;
+    try {
+      const url = `https://cricket.sportmonks.com/api/v2.0/fixtures/${histId}?include=localteam,visitorteam,runs,balls&api_token=${encodeURIComponent(apiToken)}`;
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 6000);
+      const res = await fetch(url, {
+        headers: { Accept: "application/json" },
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+
+      if (!res.ok) continue;
+      const json = (await res.json()) as { data?: Record<string, unknown> };
+      if (!json.data) continue;
+
+      const raw = json.data;
+      const status = asString(raw.status, "");
+      const local = asRecord(raw.localteam);
+      const visitor = asRecord(raw.visitorteam);
+      const localName = asString(local.name, "Home Team");
+      const visitorName = asString(visitor.name, "Away Team");
+      const matchDate = asString(raw.starting_at, "").slice(0, 10);
+      const resultNote = typeof raw.note === "string" ? raw.note : null;
+
+      const rawRuns = Array.isArray(raw.runs) ? raw.runs : [];
+      const innings = rawRuns.map((r: any) => ({
+        inningNumber: asNumber(r.inning, 1),
+        teamName: r.team_id === local.id ? localName : visitorName,
+        score: asNumber(r.score, 0),
+        wickets: asNumber(r.wickets, 0),
+        overs: asNumber(r.overs, 0),
+      }));
+
+      let targetOverSummary: string | undefined;
+      const rawBalls = Array.isArray(raw.balls) ? raw.balls : [];
+      if (rawBalls.length > 0 && targetOver) {
+        const overDecMin = targetOver - 1;
+        const overDecMax = targetOver;
+        const targetDeliveries = rawBalls.filter((b: any) => {
+          const ball = Number(b.ball);
+          return ball >= overDecMin && ball < overDecMax;
+        });
+
+        if (targetDeliveries.length > 0) {
+          const runsScored = targetDeliveries.reduce((sum: number, b: any) => {
+            const r = Number(b.score?.runs ?? b.runs ?? 0);
+            return sum + (isNaN(r) ? 0 : r);
+          }, 0);
+          targetOverSummary = `Over #${targetOver} had ${runsScored} total runs scored across ${targetDeliveries.length} recorded balls.`;
+        }
+      }
+
+      results.push({
+        fixtureId: histId,
+        title: `${localName} vs ${visitorName} (${matchDate})`,
+        matchDate,
+        status,
+        resultNote,
+        innings,
+        targetOverSummary,
+        sourceUrlOrOrigin: `https://cricket.sportmonks.com/api/v2.0/fixtures/${histId}`,
+      });
+    } catch {
+      // Continue next candidate
+    }
+  }
+
+  historicalFixtureCache.set(currentFixtureId, results);
+  if (results.length > 0) {
+    logger.info(
+      `[SPORTMONKS] Historical fixtures pre-fetched | count=${results.length} for fixture #${currentFixtureId}`
+    );
+  }
+  return results;
 }

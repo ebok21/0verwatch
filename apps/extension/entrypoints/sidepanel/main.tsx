@@ -314,8 +314,17 @@ export function ExtensionSidePanelApp() {
       }
     };
 
+    // Periodic telemetry polling: checks sweeps, positions, and Sentry alerts every 10 seconds
+    const telemetryInterval = setInterval(() => {
+      const mid = identifierRef.current?.marketId;
+      if (mid && !isLoadingMarketRef.current) {
+        void loadMarketData(mid, true);
+      }
+    }, 10000);
+
     chrome.runtime.onMessage.addListener(messageListener);
     return () => {
+      clearInterval(telemetryInterval);
       chrome.runtime.onMessage.removeListener(messageListener);
       if (abortControllerRef.current) {
         abortControllerRef.current.abort();
@@ -431,25 +440,34 @@ export function ExtensionSidePanelApp() {
     }
   };
 
-  // Manual Guard Watch Tick
+  // Manual Guard Watch & Sentry Trigger
   const handleTickWatch = async () => {
-    if (!trackedMarket || isRunningTick) return;
+    if (isRunningTick) return;
     setIsRunningTick(true);
     try {
-      const res = await fetch(`${API_BASE_URL}/api/watch`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "TICK",
-          trackingId: trackedMarket.trackingId,
-          bypassCooldown: true,
-        }),
-      });
-      if (res.ok) {
-        const tickData = await res.json();
-        if (identifierRef.current?.marketId) {
-          void loadMarketData(identifierRef.current.marketId, true);
-        }
+      if (trackedMarket) {
+        await fetch(`${API_BASE_URL}/api/watch`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "TICK",
+            trackingId: trackedMarket.trackingId,
+            bypassCooldown: true,
+          }),
+        });
+      } else if (identifier?.marketId) {
+        await fetch(`${API_BASE_URL}/api/watch`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action: "TRACK",
+            marketId: identifier.marketId,
+            activeSide: position?.side,
+          }),
+        });
+      }
+      if (identifierRef.current?.marketId) {
+        await loadMarketData(identifierRef.current.marketId, true);
       }
     } catch {
       // Non-fatal
@@ -823,7 +841,7 @@ export function ExtensionSidePanelApp() {
                   onClick={handleTickWatch}
                   className="px-2 py-1 bg-[#21262D] hover:bg-[#30363D] border border-[#30363D] text-[10px] font-bold text-white rounded"
                 >
-                  {isRunningTick ? "CHECKING..." : "CHECK MATCH NOW"}
+                  {isRunningTick ? "EVALUATING..." : "EVALUATE SENTRY NOW"}
                 </button>
               </div>
 

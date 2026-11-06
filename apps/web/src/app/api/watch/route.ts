@@ -14,6 +14,10 @@ import {
   processGuardWatchCycleForMarket,
 } from "@/lib/watch/engine";
 import {
+  ensureInProcessWatcherStarted,
+  runInProcessSweep,
+} from "@/lib/watch/in-process-watcher";
+import {
   getUserDecryptedZeroGKeys,
   resolveRequestOrDevUser,
 } from "@/lib/auth/session";
@@ -32,6 +36,10 @@ const TrackMarketBodySchema = z.discriminatedUnion("action", [
     trackingId: z.string().min(1),
     bypassCooldown: z.boolean().optional(),
   }),
+  z.object({
+    action: z.literal("SWEEP"),
+    bypassCooldown: z.boolean().optional(),
+  }),
 ]);
 
 const UpdateWatchBodySchema = z.object({
@@ -45,6 +53,7 @@ export async function OPTIONS() {
 
 export async function GET(req: NextRequest) {
   try {
+    ensureInProcessWatcherStarted();
     const user = await resolveRequestOrDevUser(req);
     const marketId = req.nextUrl.searchParams.get("marketId");
     const db = getAdminDb();
@@ -70,6 +79,7 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
+    ensureInProcessWatcherStarted();
     const user = await resolveRequestOrDevUser(req);
     const rawBody = (await req.json()) as Record<string, unknown>;
     const normalizedBody = rawBody.action
@@ -77,6 +87,13 @@ export async function POST(req: NextRequest) {
       : { action: "TRACK", ...rawBody };
 
     const parsed = TrackMarketBodySchema.parse(normalizedBody);
+
+    if (parsed.action === "SWEEP") {
+      const sweepRes = await runInProcessSweep({
+        bypassCooldown: parsed.bypassCooldown,
+      });
+      return jsonResponse(sweepRes);
+    }
 
     if (parsed.action === "TICK") {
       const db = getAdminDb();
@@ -131,6 +148,16 @@ export async function POST(req: NextRequest) {
       authorizedBackgroundInference: parsed.authorizedBackgroundInference,
       activeSide: parsed.activeSide,
     });
+
+    // Run immediate baseline Sentry evaluation
+    const activeRec = guardWatchRegistry.get(trackedMarket.trackingId);
+    if (activeRec) {
+      try {
+        await guardWatchRegistry.runTickForRecord(activeRec, { bypassCooldown: true });
+      } catch {
+        // Non-fatal
+      }
+    }
 
     return jsonResponse({ trackedMarket }, 201);
   } catch (err) {

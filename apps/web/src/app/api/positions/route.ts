@@ -9,7 +9,8 @@ import {
   executeReconWorkflow,
   getLatestReconReportForMarket,
 } from "@/lib/agents/orchestrator";
-import { createOrUpdateTrackedMarket } from "@/lib/watch/engine";
+import { createOrUpdateTrackedMarket, guardWatchRegistry } from "@/lib/watch/engine";
+import { ensureInProcessWatcherStarted } from "@/lib/watch/in-process-watcher";
 import { resolveInferenceProvider } from "@/lib/inference";
 import {
   getUserDecryptedZeroGKeys,
@@ -127,13 +128,25 @@ export async function POST(req: NextRequest) {
             createdAt: new Date().toISOString(),
           };
         }
-        await createOrUpdateTrackedMarket({
+        const tracked = await createOrUpdateTrackedMarket({
           userId: user.userId,
           market,
           latestReconReport: latestReport,
           authorizedBackgroundInference: true,
           activeSide: body.side,
         });
+
+        // Trigger immediate baseline Sentry sweep for the freshly registered trade
+        const activeRecord = guardWatchRegistry.get(tracked.trackingId);
+        if (activeRecord) {
+          try {
+            await guardWatchRegistry.runTickForRecord(activeRecord, { bypassCooldown: true });
+          } catch (tickErr) {
+            logger.warn("[POSITIONS] Immediate Sentry evaluation error", { error: tickErr });
+          }
+        }
+        ensureInProcessWatcherStarted();
+
         logger.info(
           `[POSITIONS] Auto-activated Guard Watch for position thesis | marketId=${body.marketId} | side=${body.side}`
         );

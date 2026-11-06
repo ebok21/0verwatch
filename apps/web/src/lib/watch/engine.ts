@@ -25,6 +25,7 @@ import {
   createIdempotentNotification,
 } from "./in-memory-registry";
 import { notifyWorkerOfTrackUpdate } from "./worker-client";
+import { ensureInProcessWatcherStarted } from "./in-process-watcher";
 import { logger } from "../logger";
 
 export { guardWatchRegistry };
@@ -113,7 +114,10 @@ export async function createOrUpdateTrackedMarket(params: {
     trackedMarket: record,
     market: params.market,
     activeSide: params.activeSide,
+    latestReconReport: params.latestReconReport,
   });
+
+  ensureInProcessWatcherStarted();
 
   void notifyWorkerOfTrackUpdate({
     action: "TRACK",

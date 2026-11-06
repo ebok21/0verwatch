@@ -78,7 +78,19 @@ export async function runSentryEvaluation(params: {
   provider: InferenceProvider;
   toolRegistry: ToolRegistry;
   activeSide?: "YES" | "NO";
+  currentMatchState?: Record<string, unknown>;
+  latestReconReport?: ReconReport | null;
 }): Promise<SentryEvaluation> {
+  const reconSummary = params.latestReconReport
+    ? {
+        assessment: params.latestReconReport.assessment,
+        yesProbability: params.latestReconReport.yesProbability,
+        noProbability: params.latestReconReport.noProbability,
+        headline: params.latestReconReport.headline,
+        summary: params.latestReconReport.summary,
+      }
+    : null;
+
   const res = await params.provider.complete({
     model: "qwen3.5-35b-a3b",
     agentRole: "SENTRY",
@@ -92,9 +104,15 @@ export async function runSentryEvaluation(params: {
         content: JSON.stringify({
           marketId: params.market.marketId,
           question: params.market.question,
+          marketType: params.market.marketType,
+          resolutionCriteria: params.market.resolutionCriteria,
           activePaperPositionSide: params.activeSide ?? "YES",
           monitoringPlan: params.monitoringPlan,
+          currentMatchState: params.currentMatchState ?? {},
+          latestReconAssessment: reconSummary,
           matchDevelopmentDiff: params.comparison,
+          instruction:
+            "Evaluate whether current live match status or Recon findings threaten or contradict the user's active paper position (YES or NO). If a discrepancy or adverse event exists, alert immediately as POSITION_THESIS_WEAKENED or CRITICAL_DEVELOPMENT with HIGH or CRITICAL severity.",
         }),
       },
     ],
@@ -119,7 +137,7 @@ export async function runSentryEvaluation(params: {
         parsed.severity === "HIGH" ||
         parsed.severity === "CRITICAL"
         ? parsed.severity
-        : "MEDIUM",
+        : "CRITICAL",
     summary: String(
       parsed.summary ?? "Sentry evaluated cricket development against paper position."
     ),
@@ -236,6 +254,7 @@ export class GuardWatchRegistry {
     trackedMarket: TrackedMarket;
     market: MarketMetadata;
     activeSide?: "YES" | "NO";
+    latestReconReport?: ReconReport | null;
   }): ActiveWatchRecord {
     const record: ActiveWatchRecord = {
       trackingId: params.trackedMarket.trackingId,
@@ -245,7 +264,7 @@ export class GuardWatchRegistry {
       market: params.market,
       trackedMarket: params.trackedMarket,
       latestSnapshot: null,
-      latestReconReport: null,
+      latestReconReport: params.latestReconReport ?? null,
       lastPolledAt: params.trackedMarket.lastPolledAt,
       lastInferenceAt: params.trackedMarket.lastInferenceAt,
       sentryCallCount: params.trackedMarket.sentryCallCount,
@@ -340,8 +359,50 @@ export class GuardWatchRegistry {
       watchedFields: ["status", "note", "totalRuns", "wickets", "oversBowled"],
     });
 
-    // 1. If match state is unchanged: ZERO FIRESTORE WRITES
-    if (!comparison.hasMeaningfulChanges) {
+    // Ensure baseline recon report is available for position thesis checks
+    if (!active.latestReconReport) {
+      active.latestReconReport = await getLatestReconReportForMarket(active.marketId);
+    }
+
+    const hasMeaningfulMatchChanges = comparison.hasMeaningfulChanges;
+
+    // Detect if the active trade side directly contradicts the Recon assessment
+    const hasPositionContradiction = Boolean(
+      active.activeSide &&
+      active.latestReconReport &&
+      active.sentryCallCount < 2 &&
+      (
+        (active.activeSide === "YES" && active.latestReconReport.assessment === "NO") ||
+        (active.activeSide === "NO" && active.latestReconReport.assessment === "YES")
+      )
+    );
+
+    const isMatchCompleted =
+      normalizedState.status === "FINISHED" ||
+      normalizedState.status === "FT" ||
+      normalizedState.status === "COMPLETED" ||
+      normalizedState.status === "ABANDONED";
+
+    const isMatchCompletedWithActiveTrade = Boolean(
+      active.activeSide &&
+      active.sentryCallCount < 2 &&
+      isMatchCompleted
+    );
+
+    const isManualBypass = Boolean(options?.bypassCooldown);
+
+    // Evaluate Sentry if:
+    // 1) Live match state or scorecard changed
+    // 2) Active trade directly contradicts Recon baseline thesis or match is concluded
+    // 3) Manual test/bypass requested
+    const shouldTriggerSentry =
+      hasMeaningfulMatchChanges ||
+      hasPositionContradiction ||
+      isMatchCompletedWithActiveTrade ||
+      isManualBypass;
+
+    // 1. If match state is unchanged and no trade discrepancy: ZERO FIRESTORE WRITES
+    if (!shouldTriggerSentry) {
       active.lastPolledAt = now;
       active.trackedMarket.snapshotCount += 1;
       active.trackedMarket.lastPolledAt = now;
@@ -355,7 +416,7 @@ export class GuardWatchRegistry {
       };
     }
 
-    // Meaningful development detected
+    // Cooldown enforcement for repetitive ticks (bypassed on manual trigger)
     const cooldownMs =
       Math.max(
         MIN_COOLDOWN_SECONDS,
@@ -368,6 +429,7 @@ export class GuardWatchRegistry {
       Date.now() - new Date(active.lastInferenceAt).getTime() < cooldownMs
     ) {
       active.lastPolledAt = now;
+      active.trackedMarket.snapshotCount += 1;
       active.trackedMarket.lastPolledAt = now;
       return {
         trackedMarket: active.trackedMarket,
@@ -383,7 +445,7 @@ export class GuardWatchRegistry {
       active.trackedMarket.monitoringPlan.maxSentryEvaluations
     );
 
-    if (active.sentryCallCount >= maxSentry) {
+    if (active.sentryCallCount >= maxSentry && !options?.bypassCooldown) {
       active.trackedMarket.status = "LIMIT_REACHED";
       return {
         trackedMarket: active.trackedMarket,
@@ -404,6 +466,90 @@ export class GuardWatchRegistry {
     }
 
     if (!active.userDecryptedKeys.skKey) {
+      // Deterministic Sentry alert if active position directly contradicts reality or Recon
+      if (hasPositionContradiction || isMatchCompleted) {
+        active.sentryCallCount += 1;
+        active.trackedMarket.snapshotCount += 1;
+        active.trackedMarket.sentryCallCount = active.sentryCallCount;
+        active.lastPolledAt = now;
+        active.lastInferenceAt = now;
+        active.trackedMarket.lastPolledAt = now;
+        active.trackedMarket.lastInferenceAt = now;
+        active.trackedMarket.latestNormalizedState = normalizedState;
+        active.trackedMarket.updatedAt = now;
+
+        const category: SentryAlertCategory = hasPositionContradiction
+          ? "POSITION_THESIS_WEAKENED"
+          : "CRITICAL_DEVELOPMENT";
+        const reason = hasPositionContradiction
+          ? `CRITICAL DISCREPANCY: Active trade side (${active.activeSide}) directly contradicts Recon assessment (${active.latestReconReport?.assessment}). Current match: ${normalizedState.totalRuns}/${normalizedState.wickets} in ${normalizedState.oversBowled} ov.`
+          : `Match completed: Current fixture status is ${normalizedState.status}.`;
+
+        const sentryEvent: GuardWatchEvent = {
+          eventId: `evt-${Date.now()}`,
+          timestamp: now,
+          type: "SENTRY_DECISION",
+          summary: `Sentry [${category}]: ${reason}`,
+          sentryDecision: "NOTIFY_ONLY",
+          requestId: `sentry-rule-${Date.now()}`,
+        };
+        active.trackedMarket.recentEvents = [
+          sentryEvent,
+          ...active.trackedMarket.recentEvents,
+        ].slice(0, 15);
+
+        const notification = await createIdempotentNotification({
+          notificationId: `notif-${active.trackingId}-${Date.now()}`,
+          userId: active.userId,
+          trackingId: active.trackingId,
+          marketId: active.marketId,
+          type: "SENTRY_ALERT",
+          alertCategory: category,
+          title: `Sentry Alert [${category}] • ${active.market.marketId}`,
+          message: reason,
+          severity: "CRITICAL",
+          requestId: sentryEvent.requestId,
+          acknowledged: false,
+          createdAt: now,
+        });
+
+        try {
+          const db = getAdminDb();
+          await db.collection(TRACKED_COLLECTION).doc(active.trackingId).set(
+            {
+              snapshotCount: active.trackedMarket.snapshotCount,
+              sentryCallCount: active.trackedMarket.sentryCallCount,
+              lastPolledAt: now,
+              lastInferenceAt: now,
+              latestNormalizedState: normalizedState,
+              recentEvents: active.trackedMarket.recentEvents,
+              updatedAt: now,
+            },
+            { merge: true }
+          );
+        } catch {
+          // Non-fatal
+        }
+
+        return {
+          trackedMarket: active.trackedMarket,
+          comparison,
+          sentryEvaluation: {
+            decision: "NOTIFY_ONLY",
+            alertCategory: category,
+            severity: "CRITICAL",
+            summary: reason,
+            reasoning: reason,
+            recommendedSpecialists: ["DATA"],
+            requestId: sentryEvent.requestId ?? `sentry-rule-${Date.now()}`,
+            provider: "zero-g",
+            evaluatedAt: now,
+          },
+          scoutingReport: null,
+          notification,
+        };
+      }
+
       active.trackedMarket.status = "PAUSED_CREDITS";
       return {
         trackedMarket: active.trackedMarket,
@@ -424,6 +570,7 @@ export class GuardWatchRegistry {
         active.trackedMarket.status = "PAUSED_BUDGET";
       }
       active.lastPolledAt = now;
+      active.trackedMarket.snapshotCount += 1;
       active.trackedMarket.lastPolledAt = now;
       return {
         trackedMarket: active.trackedMarket,
@@ -452,6 +599,8 @@ export class GuardWatchRegistry {
         provider,
         toolRegistry,
         activeSide: active.activeSide,
+        currentMatchState: normalizedState,
+        latestReconReport: active.latestReconReport,
       });
 
       active.sentryCallCount += 1;
@@ -504,6 +653,25 @@ export class GuardWatchRegistry {
         acknowledged: false,
         createdAt: now,
       });
+
+      // Synchronize updated state to Firestore tracked_markets
+      try {
+        const db = getAdminDb();
+        await db.collection(TRACKED_COLLECTION).doc(active.trackingId).set(
+          {
+            snapshotCount: active.trackedMarket.snapshotCount,
+            sentryCallCount: active.trackedMarket.sentryCallCount,
+            lastPolledAt: now,
+            lastInferenceAt: now,
+            latestNormalizedState: normalizedState,
+            recentEvents: active.trackedMarket.recentEvents,
+            updatedAt: now,
+          },
+          { merge: true }
+        );
+      } catch (syncErr) {
+        logger.warn("Could not sync tracked market state to Firestore", { error: syncErr });
+      }
 
       logger.info(
         `[SENTRY] Evaluated | alertCategory=${sentryEvaluation.alertCategory} | side=${active.activeSide} | decision=${sentryEvaluation.decision}`

@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback, useMemo } from "react";
+import React, { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import ReactDOM from "react-dom/client";
 import {
   defaultDemoMarketAdapter,
@@ -70,6 +70,13 @@ export function ExtensionSidePanelApp() {
   const [showSources, setShowSources] = useState(false);
   const [showCriteria, setShowCriteria] = useState(false);
 
+  // References to prevent re-entrant loops and unbounded fetch spam
+  const identifierRef = useRef<MarketIdentifier | null>(null);
+  const loadedMarketIdRef = useRef<string | null>(null);
+  const attemptedMarketIdRef = useRef<string | null>(null);
+  const isLoadingMarketRef = useRef<boolean>(false);
+  const abortControllerRef = useRef<AbortController | null>(null);
+
   const loadReadiness = useCallback(async () => {
     try {
       const res = await fetch(`${API_BASE_URL}/api/readiness`);
@@ -81,50 +88,130 @@ export function ExtensionSidePanelApp() {
     }
   }, []);
 
-  const loadMarketData = useCallback(async (marketId: string) => {
+  const loadMarketData = useCallback(async (marketId: string, force: boolean = false) => {
+    if (!force && attemptedMarketIdRef.current === marketId) {
+      return;
+    }
+    attemptedMarketIdRef.current = marketId;
+
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    const abortController = new AbortController();
+    abortControllerRef.current = abortController;
+    const signal = abortController.signal;
+
     setIsLoadingMarket(true);
+    isLoadingMarketRef.current = true;
     setErrorMsg(null);
+
     try {
-      const [mRes, rRes, pRes, wRes, nRes] = await Promise.all([
-        fetch(`${API_BASE_URL}/api/markets/${encodeURIComponent(marketId)}`),
-        fetch(`${API_BASE_URL}/api/recon?marketId=${encodeURIComponent(marketId)}`),
-        fetch(`${API_BASE_URL}/api/positions?marketId=${encodeURIComponent(marketId)}&status=OPEN`),
-        fetch(`${API_BASE_URL}/api/watch?marketId=${encodeURIComponent(marketId)}`),
-        fetch(`${API_BASE_URL}/api/notifications`),
+      const storage = await chrome.storage?.local?.get(["overwatchSessionToken"]).catch(() => ({}));
+      const sessionToken = (storage as any)?.overwatchSessionToken as string | undefined;
+      const headers: Record<string, string> = {};
+      if (sessionToken) {
+        headers.Authorization = `Bearer ${sessionToken}`;
+      }
+
+      const [mSettled, rSettled, pSettled, wSettled, nSettled] = await Promise.allSettled([
+        fetch(`${API_BASE_URL}/api/markets/${encodeURIComponent(marketId)}`, { signal, headers }),
+        fetch(`${API_BASE_URL}/api/recon?marketId=${encodeURIComponent(marketId)}`, { signal, headers }),
+        fetch(`${API_BASE_URL}/api/positions?marketId=${encodeURIComponent(marketId)}&status=OPEN`, { signal, headers }),
+        fetch(`${API_BASE_URL}/api/watch?marketId=${encodeURIComponent(marketId)}`, { signal, headers }),
+        fetch(`${API_BASE_URL}/api/notifications`, { signal, headers }),
       ]);
 
-      if (mRes.ok) {
-        const mData = await mRes.json();
-        setMarket(mData.market ?? null);
+      if (signal.aborted) return;
+
+      // 1. Core Market Metadata
+      let marketResolved = false;
+      if (mSettled.status === "fulfilled" && mSettled.value.ok) {
+        const mData = await mSettled.value.json().catch(() => ({}));
+        const resolvedMarket = mData.market ?? (mData.marketId ? mData : null);
+        if (resolvedMarket) {
+          setMarket(resolvedMarket);
+          if (mData.latestReport) {
+            setReport(mData.latestReport);
+          }
+          loadedMarketIdRef.current = marketId;
+          setErrorMsg(null);
+          marketResolved = true;
+        }
       }
 
-      if (rRes.ok) {
-        const rData = await rRes.json();
-        setReport(rData.report ?? null);
+      // Fallback: If port 3000 did not return the market, query port 3001 (Mock Market server)
+      if (!marketResolved && !signal.aborted) {
+        try {
+          const fallbackRes = await fetch(
+            `http://127.0.0.1:3001/api/markets/${encodeURIComponent(marketId)}`,
+            { signal }
+          );
+          if (fallbackRes.ok) {
+            const fbData = await fallbackRes.json().catch(() => ({}));
+            const resolvedMarket = fbData.market ?? (fbData.marketId ? fbData : null);
+            if (resolvedMarket) {
+              setMarket(resolvedMarket);
+              loadedMarketIdRef.current = marketId;
+              setErrorMsg(null);
+              marketResolved = true;
+            }
+          }
+        } catch {
+          // Port 3001 offline or unreachable
+        }
       }
 
-      if (pRes.ok) {
-        const pData = await pRes.json();
+      if (!marketResolved) {
+        if (mSettled.status === "fulfilled") {
+          const errBody = await mSettled.value.json().catch(() => ({}));
+          const msg = errBody.message || `Backend returned HTTP ${mSettled.value.status} for market.`;
+          console.warn("[Extension] Market fetch non-ok:", mSettled.value.status, errBody);
+          setErrorMsg(msg);
+        } else if ((mSettled.reason as any)?.name !== "AbortError") {
+          console.error("[Extension] Failed to connect to backend for market data:", mSettled.reason);
+          setErrorMsg(`Failed to connect to Overwatch backend (${API_BASE_URL}). Ensure Next.js is running (npm run dev:web).`);
+        }
+      }
+
+      // 2. Latest Recon Report
+      if (rSettled.status === "fulfilled" && rSettled.value.ok) {
+        const rData = await rSettled.value.json().catch(() => ({}));
+        if (rData.report) {
+          setReport(rData.report);
+        }
+      }
+
+      // 3. Open Positions
+      if (pSettled.status === "fulfilled" && pSettled.value.ok) {
+        const pData = await pSettled.value.json().catch(() => ({}));
         setPosition(pData.positions?.[0] ?? null);
       }
 
-      if (wRes.ok) {
-        const wData = await wRes.json();
+      // 4. Guard Watch State
+      if (wSettled.status === "fulfilled" && wSettled.value.ok) {
+        const wData = await wSettled.value.json().catch(() => ({}));
         setTrackedMarket(wData.trackedMarkets?.[0] ?? null);
       }
 
-      if (nRes.ok) {
-        const nData = await nRes.json();
+      // 5. Notifications
+      if (nSettled.status === "fulfilled" && nSettled.value.ok) {
+        const nData = await nSettled.value.json().catch(() => ({}));
         setNotifications(nData.notifications ?? []);
       }
-    } catch (err) {
-      setErrorMsg("Failed to load market data from backend.");
+    } catch (err: any) {
+      if (err?.name !== "AbortError") {
+        console.error("[Extension] loadMarketData unexpected error:", err);
+        setErrorMsg("Failed to load market data from backend.");
+      }
     } finally {
-      setIsLoadingMarket(false);
+      if (!signal.aborted) {
+        setIsLoadingMarket(false);
+        isLoadingMarketRef.current = false;
+      }
     }
   }, []);
 
-  // Inspect current tab URL
+  // Inspect current tab URL with deduplication and race protection
   const refreshCurrentTab = useCallback(async () => {
     try {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -132,41 +219,63 @@ export function ExtensionSidePanelApp() {
       setActiveTabUrl(url);
 
       // Check if URL is a demo market URL
-      const detected = detectMarketFromUrlOrDom({
-        url,
-        adapters: [defaultDemoMarketAdapter],
-      });
+      const detected = detectMarketFromUrlOrDom(url);
 
       if (detected) {
-        setIdentifier(detected);
-        loadMarketData(detected.marketId);
-      } else {
-        // Fallback: query DOM from content script
-        if (tab?.id) {
-          try {
-            const domRes = await chrome.tabs.sendMessage(tab.id, {
-              type: "OVERWATCH_EXTRACT_DOM_FALLBACK",
-            });
-            if (domRes?.dataMarketId) {
-              const domId: MarketIdentifier = {
-                platform: "demo",
-                marketId: domRes.dataMarketId,
-                detectedVia: "dom",
-              };
-              setIdentifier(domId);
-              loadMarketData(domId.marketId);
-              return;
-            }
-          } catch {
-            // Content script not ready
-          }
+        const prev = identifierRef.current;
+        const isSame = prev && prev.marketId === detected.marketId && prev.platform === detected.platform;
+        if (!isSame) {
+          identifierRef.current = detected;
+          setIdentifier(detected);
         }
-        // Stale context fix: clear market state immediately when not on a market URL
+        if (attemptedMarketIdRef.current !== detected.marketId) {
+          void loadMarketData(detected.marketId);
+        }
+        return;
+      }
+
+      // Fallback: query DOM from content script
+      if (tab?.id) {
+        try {
+          const domRes = await chrome.tabs.sendMessage(tab.id, {
+            type: "OVERWATCH_EXTRACT_DOM_FALLBACK",
+          });
+          if (domRes?.dataMarketId) {
+            const domId: MarketIdentifier = {
+              platform: "demo",
+              marketId: domRes.dataMarketId,
+              detectedVia: "dom",
+            };
+            const prev = identifierRef.current;
+            const isSame = prev && prev.marketId === domId.marketId && prev.platform === domId.platform;
+            if (!isSame) {
+              identifierRef.current = domId;
+              setIdentifier(domId);
+            }
+            if (attemptedMarketIdRef.current !== domId.marketId) {
+              void loadMarketData(domId.marketId);
+            }
+            return;
+          }
+        } catch {
+          // Content script not ready
+        }
+      }
+
+      // Stale context fix: clear market state immediately when not on a market URL
+      if (identifierRef.current !== null) {
+        identifierRef.current = null;
+        loadedMarketIdRef.current = null;
+        attemptedMarketIdRef.current = null;
+        if (abortControllerRef.current) {
+          abortControllerRef.current.abort();
+        }
         setIdentifier(null);
         setMarket(null);
         setReport(null);
         setPosition(null);
         setTrackedMarket(null);
+        setErrorMsg(null);
       }
     } catch {
       // Tab query error
@@ -174,22 +283,28 @@ export function ExtensionSidePanelApp() {
   }, [loadMarketData]);
 
   useEffect(() => {
-    refreshCurrentTab();
-    loadReadiness();
+    void refreshCurrentTab();
+    void loadReadiness();
 
     const messageListener = (msg: any) => {
       if (msg?.type === "OVERWATCH_ACTIVE_TAB_UPDATED") {
-        refreshCurrentTab();
+        void refreshCurrentTab();
       } else if (msg?.type === "OVERWATCH_DEMO_POSITION_EVENT") {
-        if (identifier) {
-          loadMarketData(identifier.marketId);
+        const mid = identifierRef.current?.marketId;
+        if (mid) {
+          void loadMarketData(mid, true);
         }
       }
     };
 
     chrome.runtime.onMessage.addListener(messageListener);
-    return () => chrome.runtime.onMessage.removeListener(messageListener);
-  }, [refreshCurrentTab, loadReadiness, identifier]);
+    return () => {
+      chrome.runtime.onMessage.removeListener(messageListener);
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+    };
+  }, [refreshCurrentTab, loadReadiness, loadMarketData]);
 
   // Execute Recon workflow
   const handleRunRecon = async () => {
@@ -226,7 +341,10 @@ export function ExtensionSidePanelApp() {
 
       const data = await res.json();
       setReport(data.report);
-      loadReadiness();
+      void loadReadiness();
+      if (identifierRef.current?.marketId) {
+        void loadMarketData(identifierRef.current.marketId, true);
+      }
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : String(err));
     } finally {
@@ -294,7 +412,9 @@ export function ExtensionSidePanelApp() {
       });
       if (res.ok) {
         const tickData = await res.json();
-        if (identifier) loadMarketData(identifier.marketId);
+        if (identifierRef.current?.marketId) {
+          void loadMarketData(identifierRef.current.marketId, true);
+        }
       }
     } catch {
       // Non-fatal
@@ -396,8 +516,27 @@ export function ExtensionSidePanelApp() {
       <div className="flex-1 p-4 space-y-4 overflow-y-auto">
         {/* Error notification */}
         {errorMsg && (
-          <div className="p-3 bg-[#F85149]/10 border border-[#F85149] text-[#F85149] font-mono text-xs rounded">
-            {errorMsg}
+          <div className="p-3 bg-[#F85149]/10 border border-[#F85149] text-[#F85149] font-mono text-xs rounded flex items-start justify-between gap-2">
+            <span className="flex-1 break-words">{errorMsg}</span>
+            <div className="flex items-center gap-1.5 shrink-0">
+              {identifier && (
+                <button
+                  type="button"
+                  onClick={() => void loadMarketData(identifier.marketId, true)}
+                  className="px-2 py-0.5 bg-[#F85149]/20 hover:bg-[#F85149]/30 text-[#F85149] border border-[#F85149]/40 rounded text-[10px] uppercase font-bold transition-colors"
+                >
+                  Retry
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => setErrorMsg(null)}
+                aria-label="Dismiss error"
+                className="px-1.5 py-0.5 text-[#8B949E] hover:text-[#C9D1D9] text-[10px] transition-colors"
+              >
+                ✕
+              </button>
+            </div>
           </div>
         )}
 
@@ -462,7 +601,7 @@ export function ExtensionSidePanelApp() {
                     AI ESTIMATE — UNCALIBRATED
                   </span>
                   <span className="font-mono text-[10px] text-[#8B949E]">
-                    Duration: {Math.round(report.telemetry.durationMs / 1000)}s
+                    Duration: {Math.round((report.telemetry?.durationMs ?? 0) / 1000)}s
                   </span>
                 </div>
 

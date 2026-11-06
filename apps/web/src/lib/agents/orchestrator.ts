@@ -48,21 +48,66 @@ function getOrchestratorTimeoutMs(): number {
   }
 }
 
-const SergeantPlanOutputSchema = z.object({
-  researchObjective: z.string().default("Analyze prediction market"),
-  dataSpecialistTask: z.object({
-    objective: z.string().default("Analyze structured match scorecard and statistics"),
-    allowedTools: z
-      .array(z.string())
-      .default(["market.get_metadata", "cricket.get_fixture_data"]),
-    maxToolCalls: z.number().int().min(1).max(3).default(2),
-  }),
-  intelligenceSpecialistTask: z.object({
-    objective: z.string().default("Investigate recent news and conditions"),
-    allowedTools: z.array(z.string()).default(["web.search", "web.fetch_page"]),
-    maxToolCalls: z.number().int().min(1).max(3).default(2),
-  }),
-});
+const SergeantPlanOutputSchema = z.preprocess(
+  (raw: unknown) => {
+    if (!raw || typeof raw !== "object") return {};
+    const obj = raw as Record<string, unknown>;
+    const dataTask = (obj.dataSpecialistTask && typeof obj.dataSpecialistTask === "object")
+      ? (obj.dataSpecialistTask as Record<string, unknown>)
+      : {};
+    const intelTask = (obj.intelligenceSpecialistTask && typeof obj.intelligenceSpecialistTask === "object")
+      ? (obj.intelligenceSpecialistTask as Record<string, unknown>)
+      : {};
+
+    return {
+      researchObjective:
+        typeof obj.researchObjective === "string" && obj.researchObjective.trim()
+          ? obj.researchObjective.trim()
+          : "Analyze prediction market",
+      dataSpecialistTask: {
+        objective:
+          typeof dataTask.objective === "string" && dataTask.objective.trim()
+            ? dataTask.objective.trim()
+            : "Analyze structured match scorecard and statistics",
+        allowedTools: Array.isArray(dataTask.allowedTools)
+          ? dataTask.allowedTools.filter((t) => typeof t === "string")
+          : ["market.get_metadata", "cricket.get_fixture_data"],
+        maxToolCalls:
+          typeof dataTask.maxToolCalls === "number"
+            ? Math.max(1, Math.min(3, Math.round(dataTask.maxToolCalls)))
+            : 2,
+      },
+      intelligenceSpecialistTask: {
+        objective:
+          typeof intelTask.objective === "string" && intelTask.objective.trim()
+            ? intelTask.objective.trim()
+            : "Investigate recent news and conditions",
+        allowedTools: Array.isArray(intelTask.allowedTools)
+          ? intelTask.allowedTools.filter((t) => typeof t === "string")
+          : ["web.search", "web.fetch_page"],
+        maxToolCalls:
+          typeof intelTask.maxToolCalls === "number"
+            ? Math.max(1, Math.min(3, Math.round(intelTask.maxToolCalls)))
+            : 2,
+      },
+    };
+  },
+  z.object({
+    researchObjective: z.string().default("Analyze prediction market"),
+    dataSpecialistTask: z.object({
+      objective: z.string().default("Analyze structured match scorecard and statistics"),
+      allowedTools: z
+        .array(z.string())
+        .default(["market.get_metadata", "cricket.get_fixture_data"]),
+      maxToolCalls: z.number().int().min(1).max(3).default(2),
+    }),
+    intelligenceSpecialistTask: z.object({
+      objective: z.string().default("Investigate recent news and conditions"),
+      allowedTools: z.array(z.string()).default(["web.search", "web.fetch_page"]),
+      maxToolCalls: z.number().int().min(1).max(3).default(2),
+    }),
+  })
+);
 
 const SpecialistRawOutputSchema = z.preprocess(
   (raw: unknown) => {
@@ -147,6 +192,12 @@ const SergeantSynthesisRawSchema = z.preprocess(
       obj.uncertainties = typeof obj.uncertainties === "string" ? [obj.uncertainties] : [];
     }
 
+    if (obj.monitoringPlan && typeof obj.monitoringPlan === "object") {
+      obj.monitoringPlan = { ...(obj.monitoringPlan as Record<string, unknown>) };
+    } else {
+      delete obj.monitoringPlan;
+    }
+
     return obj;
   },
   z.object({
@@ -157,7 +208,7 @@ const SergeantSynthesisRawSchema = z.preprocess(
     keyFactors: z.array(ClaimSchema).default([]),
     risks: z.array(ClaimSchema).default([]),
     uncertainties: z.array(z.string()).default([]),
-    monitoringPlan: MonitoringPlanSchema.omit({ marketId: true }).partial().optional(),
+    monitoringPlan: z.record(z.unknown()).optional(),
   })
 );
 
@@ -167,13 +218,23 @@ function extractJsonObject(raw: string | null): unknown {
   }
   const trimmed = raw.trim();
   const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  const candidate = fenced?.[1]?.trim() ?? trimmed;
+  let candidate = fenced?.[1]?.trim() ?? trimmed;
+
   const startIdx = candidate.indexOf("{");
   const endIdx = candidate.lastIndexOf("}");
   if (startIdx !== -1 && endIdx !== -1 && endIdx > startIdx) {
-    return JSON.parse(candidate.slice(startIdx, endIdx + 1));
+    candidate = candidate.slice(startIdx, endIdx + 1);
   }
-  return JSON.parse(candidate);
+
+  try {
+    return JSON.parse(candidate);
+  } catch {
+    // Attempt cleanup of trailing commas before closing braces/brackets
+    const sanitized = candidate
+      .replace(/,\s*([}\]])/g, "$1")
+      .replace(/[\u0000-\u001F\u007F-\u009F]/g, (c) => (c === "\n" || c === "\r" || c === "\t" ? c : ""));
+    return JSON.parse(sanitized);
+  }
 }
 
 export function verifyAndSanitizeClaims(
@@ -583,34 +644,33 @@ export async function executeReconWorkflow(params: {
     const noProbability =
       yesProbability !== null ? Math.max(0, 100 - yesProbability) : null;
 
+    const mpRaw = (rawSynthesis.monitoringPlan as Record<string, any>) ?? {};
+    const pollSec = typeof mpRaw.pollIntervalSeconds === "number" ? mpRaw.pollIntervalSeconds : 30;
+    const coolSec = typeof mpRaw.cooldownSeconds === "number" ? mpRaw.cooldownSeconds : 60;
+
     const monitoringPlan: MonitoringPlan = MonitoringPlanSchema.parse({
       marketId: params.market.marketId,
-      pollIntervalSeconds: Math.max(
-        15,
-        Math.min(300, rawSynthesis.monitoringPlan?.pollIntervalSeconds ?? 30)
-      ),
+      pollIntervalSeconds: Math.max(15, Math.min(300, pollSec)),
       monitoredTools: ["market.get_metadata", "cricket.get_fixture_data"],
       watchedFields: ["status", "innings", "runs"],
-      materialChangeCriteria: rawSynthesis.monitoringPlan?.materialChangeCriteria ?? [
-        "Meaningful score or state change",
-      ],
-      escalationConditions: rawSynthesis.monitoringPlan?.escalationConditions ?? [
-        "Wicket falls or run-rate surge",
-      ],
-      cooldownSeconds: Math.max(
-        45,
-        Math.min(300, rawSynthesis.monitoringPlan?.cooldownSeconds ?? 60)
-      ),
+      materialChangeCriteria: Array.isArray(mpRaw.materialChangeCriteria)
+        ? mpRaw.materialChangeCriteria
+        : ["Meaningful score or state change"],
+      escalationConditions: Array.isArray(mpRaw.escalationConditions)
+        ? mpRaw.escalationConditions
+        : ["Wicket falls or run-rate surge"],
+      cooldownSeconds: Math.max(45, Math.min(300, coolSec)),
       maxSentryEvaluations: 3,
       maxScoutingRuns: 2,
     });
 
-    const report: ReconReport = ReconReportSchema.parse({
+    let report: ReconReport;
+    const reportCandidate = {
       runId,
       marketId: params.market.marketId,
       fixtureId: params.market.fixtureId,
-      platform: "demo",
-      mode: "RECON",
+      platform: "demo" as const,
+      mode: "RECON" as const,
       assessment,
       yesProbability,
       noProbability,
@@ -626,13 +686,19 @@ export async function executeReconWorkflow(params: {
         fixtureStatus: fixtureData.match?.status ?? "NS",
         sportmonksRetrievedAt: fixtureData.retrievedAt,
         tavilyRetrievedAt: new Date().toISOString(),
-        freshnessSummary: `Sportmonks status: ${fixtureData.match?.status ?? "NS"
-          } (${fixtureData.freshness}). Tavily external intelligence fresh.`,
+        freshnessSummary: `Sportmonks status: ${
+          fixtureData.match?.status ?? "NS"
+        } (${fixtureData.freshness}). Tavily external intelligence fresh.`,
       },
       evidenceIds: validEvidenceIds,
       specialistFindings: [dataFinding, intelFinding],
       evidenceMap: evidenceCollector.toMap(),
       monitoringPlan,
+      requestIds,
+      provider: "zero-g" as const,
+      totalTokens,
+      estimatedCostUsd: Number(totalCostUsd.toFixed(6)),
+      latencyMs: Date.now() - workflowStart,
       telemetry: {
         totalTokens,
         totalCostUsd: Number(totalCostUsd.toFixed(6)),
@@ -642,11 +708,30 @@ export async function executeReconWorkflow(params: {
         provider: "zero-g",
       },
       createdAt: new Date().toISOString(),
-    });
+    };
+
+    const parseResult = ReconReportSchema.safeParse(reportCandidate);
+    if (parseResult.success) {
+      report = parseResult.data;
+    } else {
+      logger.error(
+        "[RECON] ReconReportSchema validation issues detected, using sanitized fallback",
+        { issues: parseResult.error.issues }
+      );
+      report = {
+        ...reportCandidate,
+        keyFactors: verifiedKeyFactors.length > 0 ? verifiedKeyFactors : [],
+        risks: verifiedRisks.length > 0 ? verifiedRisks : [],
+        supportingClaims: verifiedKeyFactors.length > 0 ? verifiedKeyFactors : [],
+        uncertainties: Array.isArray(rawSynthesis.uncertainties)
+          ? rawSynthesis.uncertainties
+          : [],
+      } as ReconReport;
+    }
 
     inMemoryReconReports.set(marketId, report);
     logger.info(
-      `[RECON] Completed | market=${marketId} | assessment=${assessment} | yesProbability=${yesProbability}% | duration=${report.telemetry.durationMs}ms`
+      `[RECON] Completed | market=${marketId} | assessment=${assessment} | yesProbability=${yesProbability}% | duration=${report.telemetry?.durationMs ?? 0}ms`
     );
 
     // Persist report & evidence to Firestore

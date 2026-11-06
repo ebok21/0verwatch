@@ -160,37 +160,43 @@ export class ZeroGInferenceProvider implements InferenceProvider {
           )
           .withResponse();
       } catch (firstErr) {
+        const errStatus = (firstErr as any)?.status;
+        const errMsg = firstErr instanceof Error ? firstErr.message : String(firstErr);
         const isUpstream502 =
-          firstErr instanceof Error &&
-          (/502|EOF|provider quote|upstream/i.test(firstErr.message) ||
-            /bad gateway/i.test(firstErr.message));
+          errStatus === 502 ||
+          errStatus === 503 ||
+          errStatus === 504 ||
+          /502|503|504|EOF|provider quote|upstream|bad gateway|gateway timeout|reset|ECONNRESET|ETIMEDOUT|socket hang up/i.test(
+            errMsg
+          );
 
         if (isUpstream502) {
           logger.warn(
             `[0G] Upstream router/provider quote error (502/EOF). Retrying with backoff...`,
-            { error: firstErr instanceof Error ? firstErr.message : String(firstErr) }
+            { error: errMsg, status: errStatus }
           );
 
           let lastErr: Error =
             firstErr instanceof Error ? firstErr : new Error(String(firstErr));
           let succeeded = false;
 
-          // Attempt retry on target model with brief backoff, then try alternative model if needed
+          // Attempt retry on target model with backoff, then try alternative model if needed
           const retryAttempts = [
-            { model: targetModel, delayMs: 1200 },
+            { model: targetModel, delayMs: 1500 },
             {
               model:
                 targetModel === "qwen3.5-35b-a3b"
                   ? "0gm-1.0-35b-a3b"
                   : "qwen3.5-35b-a3b",
-              delayMs: 2000,
+              delayMs: 2500,
             },
+            { model: targetModel, delayMs: 3500 },
           ];
 
           for (const attempt of retryAttempts) {
             await new Promise((r) => setTimeout(r, attempt.delayMs));
             try {
-              logger.info(`[0G] Retrying request with model=${attempt.model}...`);
+              logger.info(`[0G] Retrying request with model=${attempt.model} after ${attempt.delayMs}ms...`);
               responseTuple = await this.client.chat.completions
                 .create(
                   {
@@ -372,7 +378,7 @@ export class ZeroGInferenceProvider implements InferenceProvider {
         throw new InferenceProviderError({
           code: "TIMEOUT",
           message:
-            "0G Compute inference request timed out (UNKNOWN_OUTCOME). Upstream provider state is unconfirmed; explicit user retry is required.",
+            "0G Compute inference request timed out. The decentralized compute node did not complete within the timeout window. Please retry.",
           provider: "zero-g",
           statusCode: 504,
         });
@@ -380,12 +386,13 @@ export class ZeroGInferenceProvider implements InferenceProvider {
       if (err instanceof InferenceProviderError) {
         throw err;
       }
+      const rawMsg = err instanceof Error ? err.message : "Unknown 0G Router failure";
+      const isRouter502 = /502|EOF|quote/i.test(rawMsg);
       throw new InferenceProviderError({
         code: "PROVIDER_ERROR",
-        message:
-          err instanceof Error
-            ? `0G Router error: ${err.message}`
-            : "Unknown 0G Router failure",
+        message: isRouter502
+          ? `0G Router temporary node error: ${rawMsg}. Please retry.`
+          : `0G Router error: ${rawMsg}`,
         provider: "zero-g",
         statusCode: 502,
       });

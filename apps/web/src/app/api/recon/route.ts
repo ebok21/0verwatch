@@ -11,10 +11,16 @@ import {
   resolveRequestOrDevUser,
 } from "@/lib/auth/session";
 import { errorResponse, jsonResponse, optionsResponse } from "@/lib/http";
+import { logger } from "@/lib/logger";
 
 const RunReconBodySchema = z.object({
-  marketId: z.string().min(1).max(128),
-  platform: z.literal("demo").default("demo"),
+  marketId: z.preprocess(
+    (val) => (typeof val === "string" ? val.trim() : val),
+    z.string().min(1).max(128)
+  ),
+  platform: z
+    .preprocess((val) => (typeof val === "string" && val ? val.toLowerCase() : "demo"), z.literal("demo"))
+    .default("demo"),
 });
 
 export const maxDuration = 300;
@@ -42,9 +48,26 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const body = await req.json();
-    const parsed = RunReconBodySchema.parse(body);
+    const body = await req.json().catch(() => ({}));
+    const parseResult = RunReconBodySchema.safeParse(body);
+    if (!parseResult.success) {
+      logger.error("[API /api/recon] Request validation failed", {
+        body,
+        issues: parseResult.error.issues,
+      });
+      return jsonResponse(
+        {
+          error: "VALIDATION_ERROR",
+          message: `Request validation failed: ${parseResult.error.issues
+            .map((i) => `${i.path.join(".") || "root"}: ${i.message}`)
+            .join("; ")}`,
+          issues: parseResult.error.issues,
+        },
+        400
+      );
+    }
 
+    const parsed = parseResult.data;
     const market = await getCanonicalMarketMetadata(parsed.marketId);
     if (!market) {
       return jsonResponse(
@@ -71,6 +94,9 @@ export async function POST(req: NextRequest) {
 
     return jsonResponse({ report });
   } catch (err) {
+    logger.error("[API /api/recon] Workflow error", {
+      error: err instanceof Error ? err.message : String(err),
+    });
     return errorResponse(err);
   }
 }

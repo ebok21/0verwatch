@@ -55,7 +55,11 @@ describe("Stage E — Parallel Agents, Direct Fixture Validation & Failure Isola
     matchFormat: "ODI",
     matchDate: "2026-11-06",
     scheduledStartTime: "2026-11-06T02:00:00Z",
-    initialProbabilityYes: 0.55,
+    marketType: "OVER_RUNS",
+    resolutionCriteria: "Resolves YES if 8 or more runs in Over 15.",
+    minimumResolutionHorizonMinutes: 10,
+    createdAt: "2026-11-06T00:00:00Z",
+    updatedAt: "2026-11-06T00:00:00Z",
     resolutionContext: {
       targetOvers: [15],
       runThreshold: 8,
@@ -130,7 +134,7 @@ describe("Stage E — Parallel Agents, Direct Fixture Validation & Failure Isola
           };
         }
 
-        if (req.agentRole === "SERGEANT_PLANNER") {
+        if (req.agentRole === "SERGEANT_PLAN" || (req.agentRole as string) === "SERGEANT_PLANNER") {
           return {
             content: JSON.stringify({
               researchObjective: "Analyze Over 15 runs",
@@ -174,7 +178,7 @@ describe("Stage E — Parallel Agents, Direct Fixture Validation & Failure Isola
       persistToFirestore: false,
     });
 
-    expect(callOrder[0]).toBe("SERGEANT_PLANNER");
+    expect(callOrder[0]).toMatch(/^SERGEANT_PLAN/);
     // Both data and intel were triggered concurrently
     expect(callOrder).toContain("DATA_SPECIALIST");
     expect(callOrder).toContain("INTELLIGENCE_SPECIALIST");
@@ -191,7 +195,7 @@ describe("Stage E — Parallel Agents, Direct Fixture Validation & Failure Isola
     const mockProvider: InferenceProvider = {
       providerName: "zero-g",
       complete: async (req) => {
-        if (req.agentRole === "SERGEANT_PLANNER") {
+        if (req.agentRole === "SERGEANT_PLAN" || (req.agentRole as string) === "SERGEANT_PLANNER") {
           return {
             content: JSON.stringify({
               researchObjective: "Analyze market",
@@ -266,8 +270,11 @@ describe("Stage E — Parallel Agents, Direct Fixture Validation & Failure Isola
       trackingId: "watch-user-1-m1",
       userId: "user-1",
       marketId: "m1",
+      fixtureId: 71020,
+      question: baseMarket.question,
       platform: "demo",
       status: "WATCHING",
+      positionIds: ["pos-1"],
       authorizedBackgroundInference: true,
       activeSide: "YES",
       monitoringPlan: {
@@ -281,8 +288,15 @@ describe("Stage E — Parallel Agents, Direct Fixture Validation & Failure Isola
         maxSentryEvaluations: 3,
         maxScoutingRuns: 2,
       },
+      latestReconRunId: "run-1",
       sentryCallCount: 0,
       scoutingRunCount: 0,
+      snapshotCount: 0,
+      lastPolledAt: null,
+      lastInferenceAt: null,
+      leaseOwner: null,
+      leaseExpiresAt: null,
+      recentEvents: [],
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
@@ -291,21 +305,15 @@ describe("Stage E — Parallel Agents, Direct Fixture Validation & Failure Isola
       snapshotId: "snap-1",
       trackingId: "watch-user-1-m1",
       marketId: "m1",
-      platform: "demo",
       fixtureId: 71020,
-      timestamp: new Date().toISOString(),
-      structuredState: { status: "1st Innings" },
-      hash: "hash1",
+      capturedAt: new Date().toISOString(),
+      normalizedState: { status: "1st Innings" },
+      evidenceIds: [],
     };
 
-    guardWatchRegistry.register({
-      trackingId: "watch-user-1-m1",
-      marketId: "m1",
-      fixtureId: 71020,
-      marketMetadata: { ...baseMarket, marketId: "m1" },
+    guardWatchRegistry.registerMarket({
       trackedMarket: mockTracked1,
-      latestSnapshot: mockSnapshot,
-      dueAt: 0,
+      market: { ...baseMarket, marketId: "m1" },
     });
 
     expect(guardWatchRegistry.size).toBe(1);

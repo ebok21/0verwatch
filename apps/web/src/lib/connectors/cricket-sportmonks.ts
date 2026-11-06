@@ -46,7 +46,7 @@ export function validateSportmonksIncludes(includes?: string[]): string[] {
   for (const inc of input) {
     const trimmed = inc.trim();
     if (!ALLOWED_SPORTMONKS_INCLUDES.has(trimmed)) {
-      continue;
+      throw new Error(`Disallowed Sportmonks include: "${trimmed}".`);
     }
     if (!validated.includes(trimmed)) {
       validated.push(trimmed);
@@ -121,8 +121,8 @@ export function normalizeSportmonksFixture(rawFixture: Record<string, unknown>):
       const battingTeamId = asNumber(runRec.team_id, 0);
       const isLocalBatting = battingTeamId === localTeam.id;
 
-      const battingTeam = isLocalBatting ? localTeam.name : visitorTeam.name;
-      const bowlingTeam = isLocalBatting ? visitorTeam.name : localTeam.name;
+      const battingTeam = isLocalBatting ? localTeam : visitorTeam;
+      const bowlingTeam = isLocalBatting ? visitorTeam : localTeam;
 
       const totalRuns = asNumber(runRec.score, 0);
       const wickets = asNumber(runRec.wickets, 0);
@@ -138,7 +138,7 @@ export function normalizeSportmonksFixture(rawFixture: Record<string, unknown>):
         return scoreboard === `S${inningNum}` || scoreboard === `s${inningNum}` || scoreboard === String(inningNum);
       });
 
-      const overs = buildOversFromBalls(inningBalls, rawBatting, rawBowling);
+      const overs = buildOversFromBalls(inningNum, inningBalls, rawBatting, rawBowling);
 
       inningsList.push({
         inningNumber: inningNum,
@@ -154,8 +154,8 @@ export function normalizeSportmonksFixture(rawFixture: Record<string, unknown>):
   } else {
     inningsList.push({
       inningNumber: 1,
-      battingTeam: localTeam.name,
-      bowlingTeam: visitorTeam.name,
+      battingTeam: localTeam,
+      bowlingTeam: visitorTeam,
       totalRuns: 0,
       wickets: 0,
       oversBowled: 0,
@@ -165,7 +165,7 @@ export function normalizeSportmonksFixture(rawFixture: Record<string, unknown>):
   }
 
   const rawLineup = Array.isArray(rawFixture.lineup) ? rawFixture.lineup : [];
-  const players: Player[] = rawLineup.map((p) => {
+  const lineup: Player[] = rawLineup.map((p) => {
     const pr = asRecord(p);
     const pos = asRecord(pr.position);
     const lineupMeta = asRecord(pr.lineup);
@@ -173,29 +173,36 @@ export function normalizeSportmonksFixture(rawFixture: Record<string, unknown>):
 
     return {
       id: asNumber(pr.id, 0),
-      name: asString(pr.fullname, asString(pr.name, "Player")),
-      team: teamId === localTeam.id ? localTeam.name : visitorTeam.name,
+      fullName: asString(pr.fullname, asString(pr.name, "Player")),
+      teamId: teamId || undefined,
       role: asString(pos.name, "Player"),
     };
   });
 
   return MatchSchema.parse({
     fixtureId,
-    title: `${localTeam.name} vs ${visitorTeam.name} (${roundStr})`,
-    format: "ODI",
+    provider: "sportmonks",
+    leagueName: asString(asRecord(rawFixture.league).name, "International Cricket"),
+    seasonName: asString(asRecord(rawFixture.season).name, undefined),
+    round: roundStr,
+    startingAt: asString(rawFixture.starting_at, new Date().toISOString()),
     status: rawStatus,
-    note: asString(rawFixture.note),
-    venue: venueStr,
-    scheduledStartTime: asString(rawFixture.starting_at, new Date().toISOString()),
+    note: asString(rawFixture.note) || null,
+    venue: venueRaw.name ? {
+      id: asNumber(venueRaw.id, 0),
+      name: asString(venueRaw.name, venueStr),
+      city: asString(venueRaw.city, undefined),
+    } : null,
     localTeam,
     visitorTeam,
     innings: inningsList,
-    players,
-    sourceProvider: "sportmonks",
+    lineup,
+    freshness: "LIVE",
   });
 }
 
 function buildOversFromBalls(
+  inningNum: number,
   balls: unknown[],
   battingStats: unknown[],
   bowlingStats: unknown[]
@@ -205,36 +212,75 @@ function buildOversFromBalls(
   for (const b of balls) {
     const br = asRecord(b);
     const ballDecimal = asNumber(br.ball, 0);
-    const overNumber = Math.floor(ballDecimal) + 1;
-    const ballInOver = Math.round((ballDecimal - Math.floor(ballDecimal)) * 10);
+    const overNumber = Math.max(1, Math.floor(ballDecimal) + 1);
+    const ballInOver = Math.max(1, Math.round((ballDecimal - Math.floor(ballDecimal)) * 10) || 1);
+    const ballCoordinate = ballDecimal;
 
     const batsmanRaw = asRecord(br.batsman);
     const bowlerRaw = asRecord(br.bowler);
     const scoreRaw = asRecord(br.score);
+    const scoreName = asString(scoreRaw.name, asString(br.note, "")).toLowerCase();
+    const rawRuns = asNumber(scoreRaw.runs, asNumber(br.runs, 0));
 
-    const batsmanName = asString(batsmanRaw.fullname, asString(batsmanRaw.name, "Batsman"));
-    const bowlerName = asString(bowlerRaw.fullname, asString(bowlerRaw.name, "Bowler"));
-    const runs = asNumber(scoreRaw.runs, asNumber(br.runs, 0));
+    let wides = asNumber(scoreRaw.wide, asNumber(br.wide, 0));
+    let noBalls = asNumber(scoreRaw.noball, asNumber(br.noball, 0));
+    let byes = asNumber(scoreRaw.bye, asNumber(br.bye, 0));
+    let legByes = asNumber(scoreRaw.legbye, asNumber(br.legbye, 0));
 
-    const wide = asNumber(scoreRaw.wide, asNumber(br.wide, 0));
-    const noball = asNumber(scoreRaw.noball, asNumber(br.noball, 0));
-    const bye = asNumber(scoreRaw.bye, asNumber(br.bye, 0));
-    const legbye = asNumber(scoreRaw.legbye, asNumber(br.legbye, 0));
+    if (scoreName.includes("wide") && wides === 0) {
+      wides = rawRuns || 1;
+    }
+    if ((scoreName.includes("no ball") || scoreName.includes("noball")) && noBalls === 0) {
+      noBalls = 1;
+    }
+    if (scoreName.includes("bye") && !scoreName.includes("leg") && byes === 0) {
+      byes = rawRuns;
+    }
+    if ((scoreName.includes("leg bye") || scoreName.includes("legbye")) && legByes === 0) {
+      legByes = rawRuns;
+    }
 
-    const isExtra = wide > 0 || noball > 0 || bye > 0 || legbye > 0;
-    const isWicket = Boolean(br.wicket || scoreRaw.wicket);
-    const commentary = asString(scoreRaw.name, asString(br.note, ""));
+    const totalExtras = wides + noBalls + byes + legByes;
+    const runsOffBat = wides > 0 ? 0 : Math.max(0, rawRuns - totalExtras);
+    const totalRuns = runsOffBat + totalExtras;
+    const isWicket = Boolean(
+      br.wicket ||
+      scoreRaw.wicket ||
+      scoreRaw.is_wicket ||
+      scoreRaw.out ||
+      scoreName.includes("out")
+    );
+
+    const batsman: Player = {
+      id: asNumber(batsmanRaw.id, 0),
+      fullName: asString(batsmanRaw.fullname, asString(batsmanRaw.name, "Batsman")),
+    };
+    const bowler: Player = {
+      id: asNumber(bowlerRaw.id, 0),
+      fullName: asString(bowlerRaw.fullname, asString(bowlerRaw.name, "Bowler")),
+    };
 
     const delivery: Delivery = {
+      id: typeof br.id === "number" || typeof br.id === "string" ? br.id : `${inningNum}-${overNumber}-${ballInOver}`,
+      inningNumber: inningNum,
+      overNumber,
       ballNumber: ballInOver,
-      bowler: bowlerName,
-      batsman: batsmanName,
-      runs,
-      isExtra,
-      extraType: wide > 0 ? "WIDE" : noball > 0 ? "NO_BALL" : bye > 0 ? "BYE" : legbye > 0 ? "LEG_BYE" : undefined,
+      ballCoordinate,
+      batsman,
+      bowler,
+      runsOffBat,
+      extras: {
+        wides,
+        noBalls,
+        byes,
+        legByes,
+        penalty: 0,
+        totalExtras,
+      },
+      totalRuns,
       isWicket,
-      dismissalType: isWicket ? asString(br.dismissal, "OUT") : undefined,
-      commentary,
+      wicketType: isWicket ? asString(br.dismissal, "OUT") : undefined,
+      scoreLabel: asString(scoreRaw.name, asString(br.note, undefined)),
     };
 
     const existing = overMap.get(overNumber) ?? [];
@@ -243,18 +289,20 @@ function buildOversFromBalls(
   }
 
   return Array.from(overMap.entries()).map(([overNumber, deliveries]) => {
-    const totalRuns = deliveries.reduce((s, d) => s + d.runs, 0);
+    const totalRuns = deliveries.reduce((s, d) => s + d.totalRuns, 0);
+    const totalExtras = deliveries.reduce((s, d) => s + d.extras.totalExtras, 0);
     const wickets = deliveries.filter((d) => d.isWicket).length;
-    const legalBalls = deliveries.filter((d) => d.extraType !== "WIDE" && d.extraType !== "NO_BALL").length;
-    const bowler = deliveries[0]?.bowler ?? "Bowler";
+    const legalBallsBowled = deliveries.filter((d) => d.extras.wides === 0 && d.extras.noBalls === 0).length;
 
     return {
+      inningNumber: inningNum,
       overNumber,
-      bowler,
-      deliveries,
       totalRuns,
+      totalExtras,
       wickets,
-      isComplete: legalBalls >= 6,
+      legalBallsBowled,
+      isComplete: legalBallsBowled >= 6,
+      deliveries,
     };
   });
 }

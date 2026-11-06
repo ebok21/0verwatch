@@ -30,13 +30,13 @@ export async function POST(req: NextRequest) {
     const parsed = VerifyBodySchema.parse(normalized);
 
     let sessionResult;
-    if (parsed.mode === "dev_operator" || parsed.mode === "dev_mock") {
-      sessionResult = await createDevOperatorSession();
-    } else {
+    if (parsed.mode === "wallet") {
       sessionResult = await verifyWalletChallengeAndCreateSession({
         walletAddress: parsed.walletAddress,
         signature: parsed.signature as `0x${string}`,
       });
+    } else {
+      sessionResult = await createDevOperatorSession();
     }
 
     const { user, sessionToken } = sessionResult;

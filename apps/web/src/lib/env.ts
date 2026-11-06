@@ -5,6 +5,8 @@ const ServerEnvSchema = z.object({
   ZERO_G_BASE_URL: z.string().url().default("https://router-api.0g.ai/v1"),
   ZERO_G_MODEL: z.string().min(1).default("qwen3.5-35b-a3b"),
   ZERO_G_ENCRYPTION_KEY: z.string().min(32).optional(),
+  ZERO_G_SK: z.string().optional(),
+  ZERO_G_MK: z.string().optional(),
   SPORTMONKS_API_TOKEN: z.string().optional(),
   TAVILY_API_KEY: z.string().optional(),
   GOOGLE_APPLICATION_CREDENTIALS: z.string().optional(),

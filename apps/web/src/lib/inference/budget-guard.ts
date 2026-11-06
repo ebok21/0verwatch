@@ -129,7 +129,7 @@ export class InferenceBudgetGuard {
     if (this.dailyCallsCount >= config.maxDailyModelCalls) {
       return {
         allowed: false,
-        code: "INFERENCE_BUDGET_EXCEEDED",
+        code: "DAILY_BUDGET_EXCEEDED",
         reason: `Global daily 0G model call budget exhausted (${this.dailyCallsCount}/${config.maxDailyModelCalls} requests used today). Reset at midnight UTC.`,
       };
     }
@@ -197,12 +197,14 @@ export class InferenceBudgetGuard {
           check.code === "RATE_LIMITED"
             ? "RATE_LIMITED"
             : check.code === "INFERENCE_DISABLED" || check.code === "SENTRY_DISABLED"
-            ? "INFERENCE_DISABLED"
-            : "INFERENCE_BUDGET_EXCEEDED",
+              ? "INFERENCE_DISABLED"
+              : "INFERENCE_BUDGET_EXCEEDED",
         message: check.reason ?? "Inference disallowed by safety policy.",
         provider: "zero-g",
         statusCode:
-          check.code === "RATE_LIMITED" || check.code === "INFERENCE_BUDGET_EXCEEDED"
+          check.code === "RATE_LIMITED" ||
+            check.code === "INFERENCE_BUDGET_EXCEEDED" ||
+            check.code === "DAILY_BUDGET_EXCEEDED"
             ? 429
             : 403,
       });

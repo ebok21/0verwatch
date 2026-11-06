@@ -180,17 +180,10 @@ export class ZeroGInferenceProvider implements InferenceProvider {
             firstErr instanceof Error ? firstErr : new Error(String(firstErr));
           let succeeded = false;
 
-          // Attempt retry on target model with backoff, then try alternative model if needed
+          // Attempt retry on target model with backoff
           const retryAttempts = [
             { model: targetModel, delayMs: 1500 },
-            {
-              model:
-                targetModel === "qwen3.5-35b-a3b"
-                  ? "0gm-1.0-35b-a3b"
-                  : "qwen3.5-35b-a3b",
-              delayMs: 2500,
-            },
-            { model: targetModel, delayMs: 3500 },
+            { model: targetModel, delayMs: 3000 },
           ];
 
           for (const attempt of retryAttempts) {
@@ -391,7 +384,7 @@ export class ZeroGInferenceProvider implements InferenceProvider {
       throw new InferenceProviderError({
         code: "PROVIDER_ERROR",
         message: isRouter502
-          ? `0G Router temporary node error: ${rawMsg}. Please retry.`
+          ? `0G Router temporary node error: 502 Bad Gateway (provider quote EOF). The 0G compute node connection dropped. Please retry the request.`
           : `0G Router error: ${rawMsg}`,
         provider: "zero-g",
         statusCode: 502,

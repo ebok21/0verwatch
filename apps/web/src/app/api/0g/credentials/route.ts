@@ -13,6 +13,7 @@ import {
   inferenceBudgetGuard,
   setRuntimeInferenceFlags,
 } from "@/lib/inference/budget-guard";
+import { fetchZeroGBalanceAndUsage } from "@/lib/inference/zero-g-balance";
 
 const LinkZeroGKeysSchema = z.object({
   skKey: z
@@ -66,6 +67,11 @@ export async function GET(req: NextRequest) {
     const keys = await getUserDecryptedZeroGKeys(activeUser.userId);
     const telemetry = inferenceBudgetGuard.getTelemetrySummary();
 
+    let balance = null;
+    if (keys.mkKey) {
+      balance = await fetchZeroGBalanceAndUsage(keys.mkKey);
+    }
+
     return jsonResponse({
       authenticated: true,
       userId: activeUser.userId,
@@ -75,6 +81,7 @@ export async function GET(req: NextRequest) {
       skMaskedPreview: keys.skMaskedPreview,
       hasMkKey: Boolean(keys.mkKey),
       mkMaskedPreview: keys.mkMaskedPreview,
+      balance,
       mkPermissionScope: "account:read",
       mkDisclosure:
         "Optional: used only to display your 0G account balance and usage. Create this key with account:read permission only.",
@@ -98,11 +105,17 @@ export async function POST(req: NextRequest) {
       mkKey: body.mkKey ?? null,
     });
 
+    let balance = null;
+    if (body.mkKey) {
+      balance = await fetchZeroGBalanceAndUsage(body.mkKey);
+    }
+
     return jsonResponse({
       linked: true,
       userId: user.userId,
       skMaskedPreview: saved.skMaskedPreview,
       mkMaskedPreview: saved.mkMaskedPreview,
+      balance,
       mkPermissionScope: "account:read",
     });
   } catch (err) {

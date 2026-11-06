@@ -3,6 +3,7 @@ import {
   getUserDecryptedZeroGKeys,
   resolveRequestOrDevUser,
 } from "@/lib/auth/session";
+import { fetchZeroGBalanceAndUsage } from "@/lib/inference/zero-g-balance";
 import { getServerEnv } from "@/lib/env";
 import { getAdminDb } from "@/lib/firebase-admin";
 import { inferenceBudgetGuard } from "@/lib/inference/budget-guard";
@@ -22,6 +23,7 @@ export async function GET(req: NextRequest) {
     let hasUserMk = false;
     let skPreview: string | null = null;
     let userId: string | null = null;
+    let zeroGBalance: any = null;
 
     try {
       const user = await resolveRequestOrDevUser(req);
@@ -30,6 +32,10 @@ export async function GET(req: NextRequest) {
       hasUserSk = Boolean(keys.skKey);
       hasUserMk = Boolean(keys.mkKey);
       skPreview = keys.skMaskedPreview;
+
+      if (keys.mkKey) {
+        zeroGBalance = await fetchZeroGBalanceAndUsage(keys.mkKey);
+      }
     } catch {
       // Unauthenticated or dev user resolution failed
     }
@@ -76,6 +82,7 @@ export async function GET(req: NextRequest) {
         skMaskedPreview: skPreview,
         hasMkKey: hasUserMk,
       },
+      zeroGBalance,
       services: {
         zeroGInferenceKey: {
           configured: hasUserSk,

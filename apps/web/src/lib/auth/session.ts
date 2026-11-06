@@ -354,26 +354,8 @@ export async function getUserDecryptedZeroGKeys(userId: string): Promise<{
     // Return empty credentials if Firestore lookup or decryption fails
   }
 
-  // Fallback to configured environment variables if not yet stored in Firestore vault
-  const envSk =
-    process.env.ZERO_G_SK ||
-    process.env["0G_SK"] ||
-    process.env.OG_SK ||
-    null;
-  if (envSk && envSk.startsWith("sk-")) {
-    const envMk =
-      process.env.ZERO_G_MK ||
-      process.env["0G_MK"] ||
-      process.env.OG_MK ||
-      null;
-    return {
-      skKey: envSk,
-      mkKey: envMk,
-      skMaskedPreview: `${envSk.slice(0, 6)}...${envSk.slice(-4)}`,
-      mkMaskedPreview: envMk ? `${envMk.slice(0, 6)}...${envMk.slice(-4)}` : null,
-    };
-  }
-
+  // Strictly enforce user-provided keys from the extension UI / encrypted vault.
+  // Prohibit fallback to environment variables.
   return {
     skKey: null,
     mkKey: null,

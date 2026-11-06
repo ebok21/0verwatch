@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useCallback, useMemo, useRef } from "react";
 import ReactDOM from "react-dom/client";
+import { ReconRadarHUD } from "./ReconRadarHUD";
 import {
   defaultDemoMarketAdapter,
   detectMarketFromUrlOrDom,
@@ -23,6 +24,18 @@ interface ReadinessStatus {
     skMaskedPreview: string | null;
     hasMkKey: boolean;
   };
+  zeroGBalance?: {
+    ok: boolean;
+    address?: string;
+    currency: string;
+    totalBalanceUsd: number;
+    creditBalanceUsd: number;
+    depositBalanceUsd: number;
+    formattedBalance: string;
+    totalUsedUsd: number;
+    activeKeyCount: number;
+    error?: string;
+  } | null;
   services: {
     zeroGInferenceKey: { status: string; notice: string };
     vaultEncryptionKey: { status: string };
@@ -64,11 +77,15 @@ export function ExtensionSidePanelApp() {
   const [testingConnection, setTestingConnection] = useState(false);
   const [testResult, setTestResult] = useState<string | null>(null);
 
-  // Collapsible sections
-  const [showFactors, setShowFactors] = useState(true);
-  const [showRisks, setShowRisks] = useState(true);
+  // Collapsible sections - collapsed by default
+  const [showFactors, setShowFactors] = useState(false);
+  const [showRisks, setShowRisks] = useState(false);
   const [showSources, setShowSources] = useState(false);
   const [showCriteria, setShowCriteria] = useState(false);
+
+  // Paper position & utility controls
+  const [isClosingPosition, setIsClosingPosition] = useState(false);
+  const [isClearingData, setIsClearingData] = useState(false);
 
   // References to prevent re-entrant loops and unbounded fetch spam
   const identifierRef = useRef<MarketIdentifier | null>(null);
@@ -169,7 +186,7 @@ export function ExtensionSidePanelApp() {
           setErrorMsg(msg);
         } else if ((mSettled.reason as any)?.name !== "AbortError") {
           console.error("[Extension] Failed to connect to backend for market data:", mSettled.reason);
-          setErrorMsg(`Failed to connect to Overwatch backend (${API_BASE_URL}). Ensure Next.js is running (npm run dev:web).`);
+          setErrorMsg(`Failed to connect to 0verwatch backend (${API_BASE_URL}). Ensure Next.js is running (npm run dev:web).`);
         }
       }
 
@@ -316,11 +333,19 @@ export function ExtensionSidePanelApp() {
     try {
       const stepTimer1 = setTimeout(() => {
         setReconProgressStep("Parallel Specialists Active: Data & Intelligence...");
-      }, 2500);
+      }, 8000);
 
       const stepTimer2 = setTimeout(() => {
+        setReconProgressStep("Cross-Validating Live Scorecards & News Coverage...");
+      }, 40000);
+
+      const stepTimer3 = setTimeout(() => {
         setReconProgressStep("Sergeant Synthesizing Empirical Evidence...");
-      }, 15000);
+      }, 80000);
+
+      const stepTimer4 = setTimeout(() => {
+        setReconProgressStep("Finalizing Thesis & Probability Calibration...");
+      }, 120000);
 
       const res = await fetch(`${API_BASE_URL}/api/recon`, {
         method: "POST",
@@ -333,6 +358,8 @@ export function ExtensionSidePanelApp() {
 
       clearTimeout(stepTimer1);
       clearTimeout(stepTimer2);
+      clearTimeout(stepTimer3);
+      clearTimeout(stepTimer4);
 
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
@@ -386,10 +413,18 @@ export function ExtensionSidePanelApp() {
         }),
       });
       if (res.ok) {
+        const data = await res.json();
         setSkInput("");
         setMkInput("");
-        loadReadiness();
-        setTestResult("✓ 0G credentials saved in encrypted vault.");
+        void loadReadiness();
+        if (data.balance?.ok) {
+          setTestResult(`✓ Keys stored! Live 0G Balance: ${data.balance.formattedBalance} (${data.balance.activeKeyCount} active key, $${data.balance.totalUsedUsd} used)`);
+        } else {
+          setTestResult("✓ 0G credentials saved in encrypted vault.");
+        }
+      } else {
+        const err = await res.json().catch(() => ({}));
+        setTestResult(`✗ Failed: ${err.message || "Could not save credentials"}`);
       }
     } catch {
       setTestResult("Failed to save credentials.");
@@ -423,6 +458,61 @@ export function ExtensionSidePanelApp() {
     }
   };
 
+  const handleClosePositionInExtension = async () => {
+    if (!position || isClosingPosition) return;
+    setIsClosingPosition(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/positions/${position.positionId}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "close" }),
+      });
+      if (res.ok) {
+        setPosition(null);
+        if (identifierRef.current?.marketId) {
+          void loadMarketData(identifierRef.current.marketId, true);
+        }
+      }
+    } catch {
+      // Non-fatal
+    } finally {
+      setIsClosingPosition(false);
+    }
+  };
+
+  const handleClearAllData = async () => {
+    if (isClearingData) return;
+    const confirmed = window.confirm(
+      "Clear all paper positions, recon reports, and sentry alerts? Configured prediction markets will be retained."
+    );
+    if (!confirmed) return;
+
+    setIsClearingData(true);
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/clear-data`, {
+        method: "POST",
+      });
+      if (res.ok) {
+        setReport(null);
+        setPosition(null);
+        setTrackedMarket(null);
+        setNotifications([]);
+        setErrorMsg(null);
+        setTestResult("✓ Operational data cleared. Configured markets retained.");
+        if (identifierRef.current?.marketId) {
+          void loadMarketData(identifierRef.current.marketId, true);
+        }
+      } else {
+        const err = await res.json().catch(() => ({}));
+        setErrorMsg(err.message || "Failed to clear data.");
+      }
+    } catch {
+      setErrorMsg("Failed to reach clear data endpoint.");
+    } finally {
+      setIsClearingData(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-[#0D1117] text-[#F0F6FC] font-sans text-xs flex flex-col">
       {/* 1. Header & Readiness Banner */}
@@ -430,11 +520,16 @@ export function ExtensionSidePanelApp() {
         <div className="flex items-center gap-2">
           <span className="w-2.5 h-2.5 bg-[#2EA043] rounded-full inline-block" />
           <span className="font-mono text-xs font-bold tracking-wider text-white">
-            OVERWATCH // FIELD OPS
+            0VERWATCH // FIELD OPS
           </span>
         </div>
 
         <div className="flex items-center gap-2">
+          {readiness?.zeroGBalance?.ok && (
+            <span className="font-mono text-[10px] px-2 py-0.5 bg-[#238636]/10 border border-[#238636]/40 text-[#3FB950] font-bold rounded">
+              0G: {readiness.zeroGBalance.formattedBalance}
+            </span>
+          )}
           <button
             onClick={() => setShowSettings(!showSettings)}
             className={`font-mono text-[10px] px-2 py-0.5 border rounded font-bold transition-colors ${readiness?.ready
@@ -454,6 +549,22 @@ export function ExtensionSidePanelApp() {
             <span className="font-bold text-white uppercase">0G CREDENTIALS & READINESS</span>
             <button onClick={() => setShowSettings(false)} className="text-[#8B949E] hover:text-white">✕</button>
           </div>
+
+          {readiness?.zeroGBalance?.ok && (
+            <div className="p-2.5 bg-[#0D1117] border border-[#238636]/40 rounded space-y-1">
+              <div className="flex justify-between items-center text-[11px]">
+                <span className="text-[#8B949E]">0G INFERENCE BALANCE:</span>
+                <span className="font-bold text-[#3FB950] text-xs">
+                  {readiness.zeroGBalance.formattedBalance}
+                </span>
+              </div>
+              <div className="flex justify-between items-center text-[10px] text-[#8B949E]">
+                <span>Credits: ${readiness.zeroGBalance.creditBalanceUsd}</span>
+                <span>Used: ${readiness.zeroGBalance.totalUsedUsd}</span>
+                <span>{readiness.zeroGBalance.activeKeyCount} Active Key(s)</span>
+              </div>
+            </div>
+          )}
 
           <div className="space-y-2">
             <div>
@@ -514,6 +625,25 @@ export function ExtensionSidePanelApp() {
 
       {/* Main Extension Body */}
       <div className="flex-1 p-4 space-y-4 overflow-y-auto">
+        {/* Prominent setup notification if user has not entered 0G keys */}
+        {readiness && !readiness.user.hasSkKey && (
+          <div className="p-3 bg-[#D29922]/10 border border-[#D29922] text-[#E3B341] font-mono text-xs rounded space-y-2">
+            <div className="font-bold flex items-center gap-1.5 text-xs">
+              <span>⚠</span> 0G CREDENTIALS REQUIRED
+            </div>
+            <p className="text-[11px] text-[#C9D1D9]">
+              0verwatch requires your user 0G Secret Key (sk-) and Management Key (mk-) to run decentralized inference and track credits. Environment fallbacks are strictly disabled.
+            </p>
+            <button
+              type="button"
+              onClick={() => setShowSettings(true)}
+              className="px-3 py-1 bg-[#D29922] hover:bg-[#E3B341] text-[#0D1117] font-bold rounded text-[10px] uppercase transition-colors"
+            >
+              Enter 0G Keys in Settings
+            </button>
+          </div>
+        )}
+
         {/* Error notification */}
         {errorMsg && (
           <div className="p-3 bg-[#F85149]/10 border border-[#F85149] text-[#F85149] font-mono text-xs rounded flex items-start justify-between gap-2">
@@ -569,29 +699,19 @@ export function ExtensionSidePanelApp() {
               </div>
             </div>
 
-            {/* 3. Recon Action or Timeline */}
-            {!report && (
+            {/* 3. Recon Action or Radar HUD */}
+            {isRunningRecon ? (
+              <ReconRadarHUD currentStep={reconProgressStep} />
+            ) : !report ? (
               <div className="p-4 bg-[#161B22] border border-[#30363D] rounded space-y-3 text-center">
-                {isRunningRecon ? (
-                  <div className="space-y-3 py-2 font-mono">
-                    <div className="inline-block w-4 h-4 border-2 border-[#2EA043] border-t-transparent rounded-full animate-spin" />
-                    <div className="text-xs font-bold text-[#3FB950]">
-                      {reconProgressStep}
-                    </div>
-                    <div className="text-[10px] text-[#8B949E]">
-                      Parallel Specialists: Data & Intelligence active on 0G Compute
-                    </div>
-                  </div>
-                ) : (
-                  <button
-                    onClick={handleRunRecon}
-                    className="w-full py-2.5 bg-[#238636] hover:bg-[#2EA043] text-white font-mono text-xs font-bold uppercase tracking-wider rounded transition-colors"
-                  >
-                    START RECON RESEARCH →
-                  </button>
-                )}
+                <button
+                  onClick={handleRunRecon}
+                  className="w-full py-2.5 bg-[#238636] hover:bg-[#2EA043] text-white font-mono text-xs font-bold uppercase tracking-wider rounded transition-colors"
+                >
+                  START RECON RESEARCH →
+                </button>
               </div>
-            )}
+            ) : null}
 
             {/* 4. Large Final Estimate Display */}
             {report && (
@@ -632,7 +752,7 @@ export function ExtensionSidePanelApp() {
             )}
 
             {/* 5. Active Paper Position Card */}
-            <div className="p-3.5 bg-[#161B22] border border-[#30363D] rounded space-y-2">
+            <div className="p-3.5 bg-[#161B22] border border-[#30363D] rounded space-y-3">
               <div className="flex justify-between items-center">
                 <span className="font-mono text-[10px] uppercase font-bold text-[#8B949E]">
                   ACTIVE PAPER POSITION
@@ -646,8 +766,9 @@ export function ExtensionSidePanelApp() {
                 <div className="flex justify-between items-center font-mono">
                   <div className="flex items-center gap-2">
                     <span
-                      className={`text-xs px-2 py-0.5 font-bold uppercase rounded ${position.side === "YES" ? "bg-[#238636] text-white" : "bg-[#DA3633] text-white"
-                        }`}
+                      className={`text-xs px-2 py-0.5 font-bold uppercase rounded ${
+                        position.side === "YES" ? "bg-[#238636] text-white" : "bg-[#DA3633] text-white"
+                      }`}
                     >
                       {position.side}
                     </span>
@@ -655,13 +776,28 @@ export function ExtensionSidePanelApp() {
                       ${position.stake} Demo Stake
                     </span>
                   </div>
-                  <span className="text-[10px] text-[#3FB950] font-bold">
-                    ● ACTIVE IN SENTRY
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-[10px] text-[#3FB950] font-bold">
+                      ● ON SENTRY
+                    </span>
+                    <button
+                      type="button"
+                      disabled={isClosingPosition}
+                      onClick={handleClosePositionInExtension}
+                      className="px-2 py-0.5 bg-[#21262D] hover:bg-[#30363D] text-[#8B949E] hover:text-[#F85149] border border-[#30363D] rounded text-[10px] font-mono transition-colors"
+                    >
+                      {isClosingPosition ? "..." : "Close"}
+                    </button>
+                  </div>
                 </div>
               ) : (
-                <div className="font-mono text-[11px] text-[#8B949E]">
-                  No position registered yet. Open a position on the market page to activate continuous position-aware monitoring.
+                <div className="py-2.5 px-3 bg-[#0D1117] border border-[#21262D] rounded text-center space-y-1.5 font-mono">
+                  <div className="text-[11px] text-[#8B949E]">
+                    No open paper position for this market.
+                  </div>
+                  <div className="text-[10px] text-[#6E7681]">
+                    Trades are placed directly on the Demo Market to trigger Sentry & Guard Watch.
+                  </div>
                 </div>
               )}
             </div>
@@ -782,6 +918,21 @@ export function ExtensionSidePanelApp() {
             )}
           </div>
         )}
+
+        {/* 6. Bottom Clear All Data Utility */}
+        <div className="pt-4 border-t border-[#30363D] text-center space-y-1.5 font-mono">
+          <button
+            type="button"
+            disabled={isClearingData}
+            onClick={handleClearAllData}
+            className="w-full py-2 bg-[#21262D] hover:bg-[#DA3633]/20 border border-[#30363D] hover:border-[#DA3633] text-[#8B949E] hover:text-[#F85149] text-[10px] font-bold uppercase rounded transition-colors disabled:opacity-50"
+          >
+            {isClearingData ? "CLEARING OPERATIONAL DATA..." : "🗑 CLEAR ALL DATA (RETAIN MARKETS)"}
+          </button>
+          <div className="text-[9px] text-[#6E7681]">
+            Clears positions, recon runs & alerts • Preserves configured markets
+          </div>
+        </div>
       </div>
     </div>
   );

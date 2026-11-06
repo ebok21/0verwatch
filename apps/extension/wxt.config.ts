@@ -7,7 +7,7 @@ export default defineConfig({
     },
   }),
   manifest: {
-    name: "Overwatch — Prediction Market Intelligence",
+    name: "0verwatch — Prediction Market Intelligence",
     description:
       "AI-powered research and continuous monitoring layer for prediction markets on 0G Compute.",
     version: "0.1.0",
@@ -30,7 +30,7 @@ export default defineConfig({
       default_path: "sidepanel.html",
     },
     action: {
-      default_title: "Open Overwatch Intelligence Panel",
+      default_title: "Open 0verwatch Intelligence Panel",
     },
   },
 });

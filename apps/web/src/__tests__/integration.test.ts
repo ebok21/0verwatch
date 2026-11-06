@@ -8,7 +8,7 @@ import {
 } from "../lib/watch/engine";
 import {
   createPaperPosition,
-  listPaperPositionsForUser,
+  listPaperPositions,
   closePaperPosition,
 } from "../lib/positions/store";
 
@@ -16,7 +16,7 @@ describe("Overwatch End-to-End Backend Integration (Recon -> Paper Position -> G
   const testProvider: InferenceProvider = {
     providerName: "zero-g",
     complete: async (req) => {
-      if (req.agentRole === "SERGEANT_PLANNER") {
+      if (req.agentRole === "SERGEANT_PLAN" || (req.agentRole as string) === "SERGEANT_PLANNER") {
         return {
           provider: "zero-g",
           content: JSON.stringify({
@@ -89,12 +89,9 @@ describe("Overwatch End-to-End Backend Integration (Recon -> Paper Position -> G
     const position = await createPaperPosition({
       userId: testUserId,
       marketId: "ind-nz-over-15",
-      fixtureId: 71020,
-      question: "Will Over 15 yield 8+ runs?",
       side: "YES",
       stake: 50,
       reconRunId: "test-run-123",
-      label: "YES $50",
       idempotencyKey: `idem-${testUserId}-1`,
     });
 
@@ -107,19 +104,16 @@ describe("Overwatch End-to-End Backend Integration (Recon -> Paper Position -> G
     const duplicate = await createPaperPosition({
       userId: testUserId,
       marketId: "ind-nz-over-15",
-      fixtureId: 71020,
-      question: "Will Over 15 yield 8+ runs?",
       side: "YES",
       stake: 50,
       reconRunId: "test-run-123",
-      label: "YES $50",
       idempotencyKey: `idem-${testUserId}-1`,
     });
     expect(duplicate.positionId).toBe(position.positionId);
 
     // List open positions
-    const openPositions = await listPaperPositionsForUser(testUserId, "OPEN");
-    expect(openPositions.some((p) => p.positionId === position.positionId)).toBe(true);
+    const openPositions = await listPaperPositions({ userId: testUserId, status: "OPEN" });
+    expect(openPositions.some((p: any) => p.positionId === position.positionId)).toBe(true);
 
     // Close position
     const closed = await closePaperPosition(position.positionId, testUserId);

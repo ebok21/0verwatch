@@ -254,13 +254,24 @@ export function createMockMarketServer(): http.Server {
     const [currentHost = "127.0.0.1"] = hostHeader.split(":");
     const url = new URL(req.url ?? "/", `http://${hostHeader}`);
 
+    // Universal CORS headers for extension and client compatibility
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+
+    if (req.method === "OPTIONS") {
+      res.writeHead(204);
+      res.end();
+      return;
+    }
+
     if (url.pathname === "/api/health") {
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(
         JSON.stringify({
           status: "healthy",
           app: "overwatch-mock-market",
-          port: Number(process.env.MOCK_MARKET_PORT ?? currentPort ?? 3001),
+          port: MOCK_MARKET_PORT,
         })
       );
       return;
@@ -272,11 +283,17 @@ export function createMockMarketServer(): http.Server {
       const market = await getCanonicalMarketMetadata(marketId);
       if (!market) {
         res.writeHead(404, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: "Market Not Found" }));
+        res.end(
+          JSON.stringify({
+            error: "MARKET_NOT_FOUND",
+            message: `Market "${marketId}" not found.`,
+          })
+        );
         return;
       }
       res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify(market));
+      // Return shape supporting both direct market fields and nested { market, latestReport }
+      res.end(JSON.stringify({ ...market, market, latestReport: null }));
       return;
     }
 

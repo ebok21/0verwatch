@@ -4,6 +4,7 @@ import { getCanonicalMarketMetadata } from "../lib/markets/store";
 import { InferenceProvider } from "../lib/inference";
 import { executeReconWorkflow } from "../lib/agents/orchestrator";
 import { createOrUpdateTrackedMarket } from "../lib/watch/engine";
+import { createPaperPosition } from "../lib/positions/store";
 import {
   guardWatchRegistry,
   runGuardWatchSweep,
@@ -19,7 +20,7 @@ describe("Phase 1 — Guard Worker & Firestore Stabilization", () => {
   const testProvider: InferenceProvider = {
     providerName: "zero-g",
     complete: async (req) => {
-      if (req.agentRole === "SERGEANT_PLANNER") {
+      if (req.agentRole === "SERGEANT_PLAN" || (req.agentRole as string) === "SERGEANT_PLANNER") {
         return {
           provider: "zero-g",
           content: JSON.stringify({
@@ -85,6 +86,13 @@ describe("Phase 1 — Guard Worker & Firestore Stabilization", () => {
   it("1. Worker startup restores active tracked markets from Firestore into in-memory Map", async () => {
     const market = await getCanonicalMarketMetadata("ind-nz-over-15");
     expect(market).not.toBeNull();
+
+    await createPaperPosition({
+      userId: testUserId,
+      marketId: "ind-nz-over-15",
+      side: "YES",
+      stake: 50,
+    });
 
     const reconReport = await executeReconWorkflow({
       market: market!,

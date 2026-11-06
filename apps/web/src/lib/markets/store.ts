@@ -74,6 +74,18 @@ export async function listAllCanonicalMarkets(): Promise<MarketMetadata[]> {
   return Array.from(byId.values());
 }
 
+export async function seedMarketsToFirestore(): Promise<MarketMetadata[]> {
+  const seeded = listSeededMarkets();
+  const db = getAdminDb();
+  const batch = db.batch();
+  for (const market of seeded) {
+    const ref = db.collection(MARKETS_COLLECTION).doc(market.marketId);
+    batch.set(ref, market);
+  }
+  await batch.commit();
+  return seeded;
+}
+
 /**
  * Creates a new cricket prediction market with strict validation:
  * - 10-minute minimum horizon between openingTime and expectedResolutionTime

@@ -58,7 +58,7 @@ export async function createOrUpdateTrackedMarket(params: {
   const initialEvent: GuardWatchEvent = {
     eventId: `evt-${Date.now()}`,
     timestamp: now,
-    type: "MONITORING_STARTED",
+    type: "TRACKING_STARTED",
     summary: `Monitoring activated for ${params.market.question} (${params.market.homeTeam} vs ${params.market.awayTeam}).`,
   };
 
@@ -66,6 +66,8 @@ export async function createOrUpdateTrackedMarket(params: {
     trackingId,
     userId: params.userId,
     marketId: params.market.marketId,
+    fixtureId: params.market.fixtureId,
+    question: params.market.question,
     platform: "demo",
     status: "WATCHING",
     authorizedBackgroundInference: params.authorizedBackgroundInference,

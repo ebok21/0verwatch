@@ -289,14 +289,13 @@ export class GuardWatchRegistry {
   ): Promise<WatchTickResult> {
     const now = new Date().toISOString();
 
-    // Check if user still has OPEN positions for this market
-    const openPositions = await listPaperPositions({
-      userId: active.userId,
-      marketId: active.marketId,
-      status: "OPEN",
-    });
+    // Check in-memory position state (zero Firestore reads during recurring scheduler ticks)
+    const hasActivePosition = Boolean(
+      active.activeSide ||
+      (active.trackedMarket.positionIds && active.trackedMarket.positionIds.length > 0)
+    );
 
-    if (openPositions.length === 0) {
+    if (!hasActivePosition) {
       this.unregisterMarket(active.trackingId);
       active.trackedMarket.status = "STOPPED";
       return {
@@ -307,8 +306,6 @@ export class GuardWatchRegistry {
         notification: null,
       };
     }
-
-    active.activeSide = openPositions[0]?.side ?? active.activeSide ?? "YES";
 
     let matchData = options?.preFetchedMatchData;
     if (!matchData) {
@@ -420,7 +417,6 @@ export class GuardWatchRegistry {
     const budgetCheck = inferenceBudgetGuard.isCallAllowed({
       workflowType: "SENTRY",
       marketId: active.marketId,
-      isMock: false,
     });
 
     if (!budgetCheck.allowed) {

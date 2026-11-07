@@ -500,6 +500,27 @@ export function clearAllReconData(): void {
   inFlightRecons.clear();
 }
 
+export async function storeReconReportInMemoryAndDb(
+  report: ReconReport
+): Promise<void> {
+  inMemoryReconReports.set(report.marketId, report);
+  try {
+    const db = getAdminDb();
+    const runRef = db.collection("recon_runs").doc(report.runId);
+    await runRef.set(report);
+    if (report.evidenceMap) {
+      const evCol = runRef.collection("evidence");
+      for (const ev of Object.values(report.evidenceMap)) {
+        await evCol.doc(ev.evidenceId).set(ev);
+      }
+    }
+  } catch (err) {
+    logger.warn("Could not persist simulated recon_run to Firestore", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
 /**
  * Executes the full Overwatch Cricket Recon workflow:
  * 1. Deterministic Sportmonks fixture pre-fetch

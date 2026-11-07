@@ -103,4 +103,22 @@ export default defineBackground(() => {
         .catch(() => {});
     }
   });
+
+  chrome.runtime.onMessage.addListener((msg) => {
+    if (msg?.type === "OVERWATCH_TRIGGER_CHROME_NOTIFICATION") {
+      const notifId = msg.notificationId || `sim-notif-${Date.now()}`;
+      chrome.notifications.create(notifId, {
+        type: "basic",
+        iconUrl:
+          "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+        title: msg.title || "⚠️ 0verwatch Sentry Alert",
+        message:
+          msg.message ||
+          "Critical match development detected against your paper position.",
+        priority: 2,
+      });
+    } else if (msg?.type === "OVERWATCH_POLL_NOTIFICATIONS_NOW") {
+      void pollQueuedNotifications();
+    }
+  });
 });

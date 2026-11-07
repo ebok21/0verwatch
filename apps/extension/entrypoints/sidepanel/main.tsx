@@ -86,12 +86,15 @@ export function ExtensionSidePanelApp() {
   // Paper position & utility controls
   const [isClosingPosition, setIsClosingPosition] = useState(false);
   const [isClearingData, setIsClearingData] = useState(false);
+  const [isSimulating, setIsSimulating] = useState(false);
+  const [simulationBanner, setSimulationBanner] = useState<string | null>(null);
 
   // References to prevent re-entrant loops and unbounded fetch spam
   const identifierRef = useRef<MarketIdentifier | null>(null);
   const loadedMarketIdRef = useRef<string | null>(null);
   const attemptedMarketIdRef = useRef<string | null>(null);
   const isLoadingMarketRef = useRef<boolean>(false);
+  const isSimulatingRef = useRef<boolean>(false);
   const abortControllerRef = useRef<AbortController | null>(null);
 
   const loadReadiness = useCallback(async () => {
@@ -230,6 +233,7 @@ export function ExtensionSidePanelApp() {
 
   // Inspect current tab URL with deduplication and race protection
   const refreshCurrentTab = useCallback(async () => {
+    if (isSimulatingRef.current) return;
     try {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
       const url = tab?.url ?? "";
@@ -317,7 +321,7 @@ export function ExtensionSidePanelApp() {
     // Periodic telemetry polling: checks sweeps, positions, and Sentry alerts every 10 seconds
     const telemetryInterval = setInterval(() => {
       const mid = identifierRef.current?.marketId;
-      if (mid && !isLoadingMarketRef.current) {
+      if (mid && !isLoadingMarketRef.current && !isSimulatingRef.current) {
         void loadMarketData(mid, true);
       }
     }, 10000);
@@ -498,6 +502,167 @@ export function ExtensionSidePanelApp() {
     }
   };
 
+  const handleRunLiveSimulation = async () => {
+    if (isSimulating || isRunningRecon) return;
+    setIsSimulating(true);
+    isSimulatingRef.current = true;
+    setErrorMsg(null);
+
+    const simId: MarketIdentifier = {
+      platform: "demo",
+      marketId: "ind-nz-match-winner",
+      detectedVia: "url",
+    };
+    identifierRef.current = simId;
+    loadedMarketIdRef.current = simId.marketId;
+    attemptedMarketIdRef.current = simId.marketId;
+    setIdentifier(simId);
+    setReport(null);
+    setPosition(null);
+    setTrackedMarket(null);
+    setNotifications([]);
+
+    try {
+      // STAGE 1: Simulated Live Match Recon (with Radar HUD)
+      setSimulationBanner(
+        "STAGE 1/3 • LIVE MATCH RECON: IND vs NZ (Innings 1, Over 14.2 — IND 89/1)"
+      );
+      setIsRunningRecon(true);
+      setReconProgressStep("Intercepting Live Sportmonks Feed: IND 89/1 (14.2 ov)...");
+
+      const t1 = setTimeout(() => {
+        setReconProgressStep("Data & Intel: Gill 48*(44) & Kohli 27*(26) • RR 6.21...");
+      }, 1500);
+      const t2 = setTimeout(() => {
+        setReconProgressStep("Sergeant Synthesizing Live Win Probability (68% YES)...");
+      }, 3000);
+
+      const [reconRes] = await Promise.all([
+        fetch(`${API_BASE_URL}/api/simulate-live`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ step: "RECON", marketId: "ind-nz-match-winner" }),
+        }),
+        new Promise((r) => setTimeout(r, 4200)),
+      ]);
+
+      clearTimeout(t1);
+      clearTimeout(t2);
+      setIsRunningRecon(false);
+      setReconProgressStep(null);
+
+      if (!reconRes.ok) {
+        const err = await reconRes.json().catch(() => ({}));
+        throw new Error(err.message || "Failed during Simulation Stage 1 (RECON).");
+      }
+      const reconData = await reconRes.json();
+      setMarket(reconData.market);
+      setReport(reconData.report);
+      setSimulationBanner(
+        "✓ STAGE 1 COMPLETE: Sergeant Assessed 68% YES (India 89/1 in 14.2 ov). Executing Paper Trade..."
+      );
+
+      // Pause briefly so user can inspect the 68% YES Recon card
+      await new Promise((r) => setTimeout(r, 2200));
+
+      // STAGE 2: Open $100 YES Paper Position & Arm Guard Watch
+      setSimulationBanner(
+        "STAGE 2/3 • OPENING PAPER POSITION: Buying $100 YES Shares on India & Arming Sentry..."
+      );
+      const posRes = await fetch(`${API_BASE_URL}/api/simulate-live`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          step: "OPEN_POSITION",
+          marketId: "ind-nz-match-winner",
+        }),
+      });
+      if (!posRes.ok) {
+        throw new Error("Failed during Simulation Stage 2 (OPEN_POSITION).");
+      }
+      const posData = await posRes.json();
+      setPosition(posData.position);
+      setTrackedMarket(posData.trackedMarket);
+      setSimulationBanner(
+        "✓ STAGE 2 COMPLETE: $100 YES Position Active • Guard Watch Monitoring Live Match..."
+      );
+
+      await new Promise((r) => setTimeout(r, 2600));
+
+      // STAGE 3: Simulate Live Match Condition Shock (Over 16.4 Triple Wicket Collapse!)
+      setSimulationBanner(
+        "⚡ STAGE 3/3 • LIVE MATCH SHOCK (Over 16.4): Gill, Kohli & Iyer Dismissed (IND 94/4)! Invoking Sentry..."
+      );
+      await new Promise((r) => setTimeout(r, 1600));
+
+      const shockRes = await fetch(`${API_BASE_URL}/api/simulate-live`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ step: "SHOCK", marketId: "ind-nz-match-winner" }),
+      });
+      if (!shockRes.ok) {
+        throw new Error("Failed during Simulation Stage 3 (SHOCK).");
+      }
+      const shockData = await shockRes.json();
+      if (shockData.trackedMarket) {
+        setTrackedMarket(shockData.trackedMarket);
+      }
+      if (shockData.report) {
+        setReport(shockData.report);
+      }
+      if (shockData.notification) {
+        setNotifications((prev) => [shockData.notification, ...prev]);
+
+        // Fire Native Chrome OS Notification via both direct API and Background Service Worker
+        const notifId = shockData.notification.notificationId || `sim-notif-${Date.now()}`;
+        const notifTitle =
+          shockData.notification.title ||
+          "⚠️ 0verwatch Sentry Alert [POSITION_THESIS_WEAKENED]";
+        const notifMsg =
+          shockData.notification.message ||
+          "CRITICAL MATCH SHOCK (Over 16.4): India collapsed from 89/1 to 94/4! Win probability dropped 68% → 38%.";
+
+        try {
+          chrome.notifications?.create(notifId, {
+            type: "basic",
+            iconUrl:
+              "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+            title: notifTitle,
+            message: notifMsg,
+            priority: 2,
+          });
+        } catch {
+          // Fallback to background script
+        }
+
+        try {
+          chrome.runtime
+            .sendMessage({
+              type: "OVERWATCH_TRIGGER_CHROME_NOTIFICATION",
+              notificationId: `${notifId}-bg`,
+              title: notifTitle,
+              message: notifMsg,
+            })
+            .catch(() => {});
+        } catch {
+          // Ignore
+        }
+      }
+
+      setSimulationBanner(
+        "🚨 LIVE SIMULATION COMPLETE: Sentry detected the 89/1 → 94/4 collapse, downgraded India YES from 68% → 38%, and dispatched a Chrome Notification!"
+      );
+    } catch (err) {
+      setIsRunningRecon(false);
+      setReconProgressStep(null);
+      setErrorMsg(err instanceof Error ? err.message : String(err));
+      setSimulationBanner(null);
+    } finally {
+      setIsSimulating(false);
+      isSimulatingRef.current = false;
+    }
+  };
+
   const handleClearAllData = async () => {
     if (isClearingData) return;
     const confirmed = window.confirm(
@@ -516,6 +681,7 @@ export function ExtensionSidePanelApp() {
         setTrackedMarket(null);
         setNotifications([]);
         setErrorMsg(null);
+        setSimulationBanner(null);
         setTestResult("✓ Operational data cleared. Configured markets retained.");
         if (identifierRef.current?.marketId) {
           void loadMarketData(identifierRef.current.marketId, true);
@@ -659,6 +825,28 @@ export function ExtensionSidePanelApp() {
             >
               Enter 0G Keys in Settings
             </button>
+          </div>
+        )}
+
+        {/* Simulation Telemetry Banner */}
+        {simulationBanner && (
+          <div
+            className={`p-3 border font-mono text-[11px] rounded flex items-start justify-between gap-2 ${
+              simulationBanner.startsWith("🚨")
+                ? "bg-[#D29922]/15 border-[#D29922] text-[#E3B341]"
+                : "bg-[#1F6FEB]/15 border-[#1F6FEB] text-[#58A6FF]"
+            }`}
+          >
+            <span className="flex-1 leading-snug font-bold">{simulationBanner}</span>
+            {!isSimulating && (
+              <button
+                type="button"
+                onClick={() => setSimulationBanner(null)}
+                className="text-[10px] opacity-75 hover:opacity-100 px-1"
+              >
+                ✕
+              </button>
+            )}
           </div>
         )}
 
@@ -937,18 +1125,36 @@ export function ExtensionSidePanelApp() {
           </div>
         )}
 
-        {/* 6. Bottom Clear All Data Utility */}
-        <div className="pt-4 border-t border-[#30363D] text-center space-y-1.5 font-mono">
-          <button
-            type="button"
-            disabled={isClearingData}
-            onClick={handleClearAllData}
-            className="w-full py-2 bg-[#21262D] hover:bg-[#DA3633]/20 border border-[#30363D] hover:border-[#DA3633] text-[#8B949E] hover:text-[#F85149] text-[10px] font-bold uppercase rounded transition-colors disabled:opacity-50"
-          >
-            {isClearingData ? "CLEARING OPERATIONAL DATA..." : "🗑 CLEAR ALL DATA (RETAIN MARKETS)"}
-          </button>
-          <div className="text-[9px] text-[#6E7681]">
-            Clears positions, recon runs & alerts • Preserves configured markets
+        {/* 6. Bottom Simulation & Clear All Data Utilities */}
+        <div className="pt-4 border-t border-[#30363D] text-center space-y-2.5 font-mono">
+          <div className="space-y-1">
+            <button
+              type="button"
+              disabled={isSimulating || isRunningRecon}
+              onClick={handleRunLiveSimulation}
+              className="w-full py-2.5 bg-[#1F6FEB]/20 hover:bg-[#1F6FEB]/35 border border-[#1F6FEB] text-[#58A6FF] hover:text-white text-[10px] font-bold uppercase rounded transition-colors disabled:opacity-50"
+            >
+              {isSimulating
+                ? "⚡ RUNNING LIVE MATCH & SENTRY SIMULATION..."
+                : "▶ SIMULATE LIVE MATCH & SENTRY SCENARIO (IND vs NZ)"}
+            </button>
+            <div className="text-[9px] text-[#8B949E]">
+              Simulates live IND vs NZ match (68% YES) → opens $100 YES trade → triggers Over 16.4 collapse & Chrome Sentry alert
+            </div>
+          </div>
+
+          <div className="space-y-1 pt-1">
+            <button
+              type="button"
+              disabled={isClearingData || isSimulating}
+              onClick={handleClearAllData}
+              className="w-full py-2 bg-[#21262D] hover:bg-[#DA3633]/20 border border-[#30363D] hover:border-[#DA3633] text-[#8B949E] hover:text-[#F85149] text-[10px] font-bold uppercase rounded transition-colors disabled:opacity-50"
+            >
+              {isClearingData ? "CLEARING OPERATIONAL DATA..." : "🗑 CLEAR ALL DATA (RETAIN MARKETS)"}
+            </button>
+            <div className="text-[9px] text-[#6E7681]">
+              Clears positions, recon runs & alerts • Preserves configured markets
+            </div>
           </div>
         </div>
       </div>

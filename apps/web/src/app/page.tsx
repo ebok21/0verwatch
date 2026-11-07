@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { formatISTDisplay } from "@overwatch/shared";
 import { listAllCanonicalMarkets } from "@/lib/markets/store";
 
 export const dynamic = "force-dynamic";
@@ -73,9 +74,9 @@ export default async function MarketDirectoryPage() {
 
               <div className="flex flex-wrap items-center justify-between gap-4 pt-4 border-t border-[#F0EFEA] font-mono-tabular text-xs">
                 <div className="text-[#52514E]">
-                  Expected Resolution:{" "}
+                  Expected Resolution (IST):{" "}
                   <strong className="text-[#111110]">
-                    {new Date(market.expectedResolutionTime).toUTCString()}
+                    {formatISTDisplay(market.expectedResolutionTime)}
                   </strong>
                 </div>
 

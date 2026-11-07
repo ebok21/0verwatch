@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect } from "react";
-import { PaperPosition } from "@overwatch/shared";
+import { PaperPosition, formatISTTimeOnly } from "@overwatch/shared";
 
 interface Props {
   marketId: string;
@@ -305,7 +305,7 @@ export function PaperPositionForm({ marketId, fixtureId }: Props) {
                       ${pos.stake} • Position #{(pos.positionId || "").slice(-6)}
                     </div>
                     <div className="font-mono-tabular text-[10px] text-[#52514E]" suppressHydrationWarning>
-                      Opened: {new Date(pos.openedAt).toLocaleTimeString()} • Status:{" "}
+                      Opened: {formatISTTimeOnly(pos.openedAt)} • Status:{" "}
                       <span className="font-bold">{pos.status}</span>
                     </div>
                   </div>

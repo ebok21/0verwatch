@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { formatISTDisplay } from "@overwatch/shared";
 import { getCanonicalMarketMetadata } from "@/lib/markets/store";
 import { PaperPositionForm } from "@/components/PaperPositionForm";
 
@@ -108,9 +109,9 @@ export default async function MarketDetailPage({
                   </span>
                 </div>
                 <div className="flex justify-between py-1 border-b border-[#F0EFEA]">
-                  <span className="text-[#52514E]">SCHEDULED START:</span>
+                  <span className="text-[#52514E]">SCHEDULED START (IST):</span>
                   <span className="font-bold text-[#111110]">
-                    {new Date(market.scheduledStartTime).toUTCString()}
+                    {formatISTDisplay(market.scheduledStartTime)}
                   </span>
                 </div>
                 <div className="flex justify-between py-1 border-b border-[#F0EFEA]">
@@ -134,15 +135,15 @@ export default async function MarketDetailPage({
 
               <div className="grid grid-cols-2 gap-4 font-mono-tabular text-xs pt-2">
                 <div>
-                  <span className="text-[#52514E] block">OPENING TIME:</span>
+                  <span className="text-[#52514E] block">OPENING TIME (IST):</span>
                   <span className="font-bold text-[#111110]">
-                    {market.openingTime.replace("T", " ").replace("Z", " UTC")}
+                    {formatISTDisplay(market.openingTime)}
                   </span>
                 </div>
                 <div>
-                  <span className="text-[#52514E] block">EXPECTED RESOLUTION:</span>
+                  <span className="text-[#52514E] block">EXPECTED RESOLUTION (IST):</span>
                   <span className="font-bold text-[#111110]">
-                    {market.expectedResolutionTime.replace("T", " ").replace("Z", " UTC")}
+                    {formatISTDisplay(market.expectedResolutionTime)}
                   </span>
                 </div>
               </div>

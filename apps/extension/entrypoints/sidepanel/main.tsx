@@ -5,6 +5,7 @@ import {
   defaultDemoMarketAdapter,
   detectMarketFromUrlOrDom,
   EvidenceRecord,
+  formatISTTimeOnly,
   MarketIdentifier,
   MarketMetadata,
   NotificationRecord,
@@ -1041,7 +1042,7 @@ export function ExtensionSidePanelApp() {
                       {notifications[0].alertCategory || "MATCH DEVELOPMENT"}
                     </span>
                     <span className="text-[#8B949E]">
-                      {new Date(notifications[0].createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      {formatISTTimeOnly(notifications[0].createdAt)}
                     </span>
                   </div>
                   <div className="text-xs text-white">

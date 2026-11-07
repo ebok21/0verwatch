@@ -130,7 +130,7 @@ export class InferenceBudgetGuard {
       return {
         allowed: false,
         code: "DAILY_BUDGET_EXCEEDED",
-        reason: `Global daily 0G model call budget exhausted (${this.dailyCallsCount}/${config.maxDailyModelCalls} requests used today). Reset at midnight UTC.`,
+        reason: `Global daily 0G model call budget exhausted (${this.dailyCallsCount}/${config.maxDailyModelCalls} requests used today). Reset at midnight IST.`,
       };
     }
 
@@ -138,7 +138,7 @@ export class InferenceBudgetGuard {
       return {
         allowed: false,
         code: "INFERENCE_BUDGET_EXCEEDED",
-        reason: `Global daily 0G output token budget exhausted (${this.dailyOutputTokensCount}/${config.maxDailyOutputTokens} tokens used today). Reset at midnight UTC.`,
+        reason: `Global daily 0G output token budget exhausted (${this.dailyOutputTokensCount}/${config.maxDailyOutputTokens} tokens used today). Reset at midnight IST.`,
       };
     }
 

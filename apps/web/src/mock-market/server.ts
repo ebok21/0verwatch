@@ -1,4 +1,5 @@
 import http from "node:http";
+import { formatISTDisplay } from "@overwatch/shared";
 import { getCanonicalMarketMetadata, listAllCanonicalMarkets } from "../lib/markets/store";
 import { logger } from "../lib/logger";
 
@@ -94,8 +95,8 @@ function renderLightMarketHtml(market: any, currentHost: string, currentPort: nu
               <span class="font-bold text-[#111110]">${market.competition || "International ODI Series"}</span>
             </div>
             <div class="flex justify-between py-1 border-b border-[#F0EFEA]">
-              <span class="text-[#52514E]">EXPECTED RESOLUTION:</span>
-              <span class="font-bold text-[#111110]">${new Date(market.expectedResolutionTime || Date.now()).toUTCString()}</span>
+              <span class="text-[#52514E]">EXPECTED RESOLUTION (IST):</span>
+              <span class="font-bold text-[#111110]">${formatISTDisplay(market.expectedResolutionTime || Date.now())}</span>
             </div>
           </div>
         </div>

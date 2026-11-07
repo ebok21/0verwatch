@@ -11,6 +11,9 @@ import {
   SpecialistFinding,
   SpecialistFindingSchema,
   ToolOperationName,
+  formatISTDisplay,
+  getISTDateString,
+  toISTIsoString,
 } from "@overwatch/shared";
 import {
   EvidenceCollector,
@@ -313,12 +316,15 @@ async function runDataSpecialist(params: {
   provider: InferenceProvider;
   toolRegistry: ToolRegistry;
   evidenceCollector: EvidenceCollector;
+  liveMatchStatusSummary: string;
 }): Promise<{
   finding: SpecialistFinding;
   tokens: number;
   costUsd: number;
 }> {
   const startTime = Date.now();
+  const nowIST = formatISTDisplay(new Date());
+  const scheduledStartIST = formatISTDisplay(params.market.scheduledStartTime);
   const loopResult = await runCompletionWithToolLoop({
     provider: params.provider,
     toolRegistry: params.toolRegistry,
@@ -337,6 +343,9 @@ async function runDataSpecialist(params: {
           role: "user",
           content: JSON.stringify({
             task: params.taskObjective,
+            currentSystemTimeIST: nowIST,
+            scheduledStartTimeIST: scheduledStartIST,
+            officialLiveMatchStatus: params.liveMatchStatusSummary,
             marketId: params.market.marketId,
             fixtureId: params.market.fixtureId,
             question: params.market.question,
@@ -405,12 +414,16 @@ async function runIntelligenceSpecialist(params: {
   provider: InferenceProvider;
   toolRegistry: ToolRegistry;
   evidenceCollector: EvidenceCollector;
+  liveMatchStatusSummary: string;
 }): Promise<{
   finding: SpecialistFinding;
   tokens: number;
   costUsd: number;
 }> {
   const startTime = Date.now();
+  const nowIST = formatISTDisplay(new Date());
+  const todayIST = getISTDateString(new Date());
+  const scheduledStartIST = formatISTDisplay(params.market.scheduledStartTime);
   const loopResult = await runCompletionWithToolLoop({
     provider: params.provider,
     toolRegistry: params.toolRegistry,
@@ -429,17 +442,20 @@ async function runIntelligenceSpecialist(params: {
           role: "user",
           content: JSON.stringify({
             task: params.taskObjective,
+            currentSystemTimeIST: nowIST,
+            currentDateIST: todayIST,
+            scheduledStartTimeIST: scheduledStartIST,
+            officialLiveMatchStatus: params.liveMatchStatusSummary,
             marketId: params.market.marketId,
             question: params.market.question,
             matchTitle: params.market.resolutionContext?.matchTitle ?? `${params.market.homeTeam} vs ${params.market.awayTeam} ${params.market.matchFormat}`,
             competition: params.market.competition,
             homeTeam: params.market.homeTeam,
             awayTeam: params.market.awayTeam,
-            matchDate: params.market.matchDate,
+            matchDateIST: getISTDateString(params.market.scheduledStartTime || params.market.matchDate),
             matchFormat: params.market.matchFormat,
-            venue: params.market.resolutionContext?.venue ?? "N/A",
-            scheduledStartTime: params.market.scheduledStartTime,
-            criticalInstruction: `Target match is ${params.market.resolutionContext?.matchTitle ?? params.market.matchFormat} on ${params.market.matchDate} at ${params.market.resolutionContext?.venue ?? 'scheduled venue'}. Do NOT confuse this match with previous matches in this series. Ensure all search queries include "${params.market.resolutionContext?.matchTitle ?? ''} ${params.market.matchDate}".`,
+            venue: params.market.verifiedFixtureMeta?.venue ?? params.market.resolutionContext?.venue ?? "N/A",
+            criticalInstruction: `REAL-TIME IST CLOCK: Today is ${todayIST} (${nowIST}). Scheduled start time is ${scheduledStartIST}. Official Sportmonks live status is "${params.liveMatchStatusSummary}". If officialLiveMatchStatus shows an innings or live score, or if currentSystemTimeIST is past scheduledStartTimeIST, THIS MATCH IS LIVE AND UNDERWAY RIGHT NOW — NEVER state that the match is in the future or has not been played yet, even if web search returns pre-match preview articles written yesterday! All time references must be in IST (never UTC or GMT). Target match is ${params.market.resolutionContext?.matchTitle ?? params.market.matchFormat} on ${params.market.matchDate} at ${params.market.verifiedFixtureMeta?.venue ?? params.market.resolutionContext?.venue ?? 'scheduled venue'}. Do NOT confuse this match with previous matches in this series.`,
           }),
         },
       ],
@@ -565,11 +581,13 @@ export async function executeReconWorkflow(params: {
       marketType: params.market.marketType,
     });
 
+    let liveMatchStatusSummary = `Scheduled Start: ${formatISTDisplay(params.market.scheduledStartTime)} (Status: ${params.market.verifiedFixtureMeta?.status ?? "NS"})`;
     if (fixtureData.match) {
       const firstInnings = fixtureData.match.innings[0];
       const summaryText = firstInnings
         ? `${fixtureData.match.localTeam.name} vs ${fixtureData.match.visitorTeam.name} (${fixtureData.match.status}): ${firstInnings.totalRuns}/${firstInnings.wickets} in ${firstInnings.oversBowled} ov`
         : `${fixtureData.match.localTeam.name} vs ${fixtureData.match.visitorTeam.name} (${fixtureData.match.status})`;
+      liveMatchStatusSummary = summaryText;
 
       evidenceCollector.addRecord({
         toolOperation: "cricket.get_fixture_data",
@@ -611,6 +629,9 @@ export async function executeReconWorkflow(params: {
       });
     }
 
+    const nowISTDisplay = formatISTDisplay(new Date());
+    const scheduledStartISTDisplay = formatISTDisplay(params.market.scheduledStartTime);
+
     // 2. Sergeant Planning
     const planRes = await params.provider.complete({
       model: getOrchestratorModel(),
@@ -623,6 +644,9 @@ export async function executeReconWorkflow(params: {
         {
           role: "user",
           content: JSON.stringify({
+            currentSystemTimeIST: nowISTDisplay,
+            scheduledStartTimeIST: scheduledStartISTDisplay,
+            officialLiveMatchStatus: liveMatchStatusSummary,
             marketId: params.market.marketId,
             fixtureId: params.market.fixtureId,
             question: params.market.question,
@@ -657,6 +681,7 @@ export async function executeReconWorkflow(params: {
         provider: params.provider,
         toolRegistry,
         evidenceCollector,
+        liveMatchStatusSummary,
       }),
       runIntelligenceSpecialist({
         market: params.market,
@@ -664,6 +689,7 @@ export async function executeReconWorkflow(params: {
         provider: params.provider,
         toolRegistry,
         evidenceCollector,
+        liveMatchStatusSummary,
       }),
     ]);
 
@@ -737,6 +763,9 @@ export async function executeReconWorkflow(params: {
         {
           role: "user",
           content: JSON.stringify({
+            currentSystemTimeIST: formatISTDisplay(new Date()),
+            scheduledStartTimeIST: scheduledStartISTDisplay,
+            officialSportmonksLiveState: liveMatchStatusSummary,
             marketId: params.market.marketId,
             fixtureId: params.market.fixtureId,
             question: params.market.question,
@@ -843,11 +872,11 @@ export async function executeReconWorkflow(params: {
       dataFreshness: {
         fixtureId: params.market.fixtureId,
         fixtureStatus: fixtureData.match?.status ?? "NS",
-        sportmonksRetrievedAt: fixtureData.retrievedAt,
-        tavilyRetrievedAt: new Date().toISOString(),
+        sportmonksRetrievedAt: fixtureData.retrievedAt ? toISTIsoString(fixtureData.retrievedAt) : null,
+        tavilyRetrievedAt: toISTIsoString(new Date()),
         freshnessSummary: `Sportmonks status: ${
           fixtureData.match?.status ?? "NS"
-        } (${fixtureData.freshness}). Tavily external intelligence fresh.`,
+        } (${fixtureData.freshness} • ${formatISTDisplay(new Date())}). Tavily external intelligence fresh.`,
       },
       evidenceIds: validEvidenceIds,
       specialistFindings: [dataFinding, intelFinding],
@@ -866,7 +895,7 @@ export async function executeReconWorkflow(params: {
         model: getOrchestratorModel(),
         provider: "zero-g",
       },
-      createdAt: new Date().toISOString(),
+      createdAt: toISTIsoString(new Date()),
     };
 
     const parseResult = ReconReportSchema.safeParse(reportCandidate);

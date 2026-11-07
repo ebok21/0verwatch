@@ -2,7 +2,13 @@
 
 import React, { useState, useEffect } from "react";
 import Link from "next/link";
-import { MarketMetadata, VerifiedFixtureMeta } from "@overwatch/shared";
+import {
+  MarketMetadata,
+  VerifiedFixtureMeta,
+  formatISTDisplay,
+  toISTDateTimeLocalInput,
+  toISTIsoString,
+} from "@overwatch/shared";
 
 export default function AdminMarketManagementPage() {
   const [markets, setMarkets] = useState<MarketMetadata[]>([]);
@@ -44,10 +50,10 @@ export default function AdminMarketManagementPage() {
   useEffect(() => {
     loadMarkets();
     const now = new Date();
-    const openIso = new Date(now.getTime() - 5 * 60 * 1000).toISOString().slice(0, 16);
-    const resolveIso = new Date(now.getTime() + 60 * 60 * 1000).toISOString().slice(0, 16);
-    setOpeningTime(openIso);
-    setExpectedResolutionTime(resolveIso);
+    const openIstLocal = toISTDateTimeLocalInput(new Date(now.getTime() - 5 * 60 * 1000));
+    const resolveIstLocal = toISTDateTimeLocalInput(new Date(now.getTime() + 60 * 60 * 1000));
+    setOpeningTime(openIstLocal);
+    setExpectedResolutionTime(resolveIstLocal);
   }, []);
 
   const handleValidateFixture = async () => {
@@ -127,8 +133,8 @@ export default function AdminMarketManagementPage() {
           matchFormat: verifiedFixture.format,
           fixtureId: verifiedFixture.fixtureId,
           marketType,
-          openingTime: new Date(openingTime).toISOString(),
-          expectedResolutionTime: new Date(expectedResolutionTime).toISOString(),
+          openingTime: toISTIsoString(new Date(`${openingTime}:00+05:30`)),
+          expectedResolutionTime: toISTIsoString(new Date(`${expectedResolutionTime}:00+05:30`)),
           minimumResolutionHorizonMinutes: 10,
           resolutionCriteria,
           verifiedFixtureMeta: verifiedFixture,
@@ -230,7 +236,7 @@ export default function AdminMarketManagementPage() {
                       {m.question}
                     </div>
                     <div className="font-mono-tabular text-[11px] text-[#52514E]">
-                      Resolution: {new Date(m.expectedResolutionTime).toLocaleString()} • Horizon: ≥10m
+                      Resolution (IST): {formatISTDisplay(m.expectedResolutionTime)} • Horizon: ≥10m
                     </div>
                   </div>
 
@@ -295,7 +301,7 @@ export default function AdminMarketManagementPage() {
                   ✓ FIXTURE #{verifiedFixture.fixtureId} VERIFIED
                 </div>
                 <div>Match: {verifiedFixture.homeTeam} vs {verifiedFixture.awayTeam}</div>
-                <div>Starting At & Format: {verifiedFixture.startingAt} • {verifiedFixture.format}</div>
+                <div>Starting At (IST) & Format: {formatISTDisplay(verifiedFixture.startingAt)} • {verifiedFixture.format}</div>
                 <div>Venue: {verifiedFixture.venue} • Status: {verifiedFixture.status}</div>
               </div>
             )}

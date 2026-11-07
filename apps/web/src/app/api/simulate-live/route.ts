@@ -6,6 +6,7 @@ import {
   ReconReportSchema,
   SnapshotRecordSchema,
   TrackedMarketSchema,
+  toISTIsoString,
 } from "@overwatch/shared";
 import { getAdminDb } from "@/lib/firebase-admin";
 import { getCanonicalMarketMetadata } from "@/lib/markets/store";
@@ -52,7 +53,7 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const now = new Date().toISOString();
+    const now = toISTIsoString(new Date());
 
     if (body.step === "RECON") {
       const runId = `recon-${market.marketId}-sim-${Date.now()}`;

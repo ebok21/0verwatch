@@ -8,6 +8,8 @@ import {
   Team,
   VerifiedFixtureMeta,
   VerifiedFixtureMetaSchema,
+  getISTDateString,
+  toISTIsoString,
 } from "@overwatch/shared";
 import { getServerEnv } from "../env";
 import { logger } from "../logger";
@@ -185,7 +187,7 @@ export function normalizeSportmonksFixture(rawFixture: Record<string, unknown>):
     leagueName: asString(asRecord(rawFixture.league).name, "International Cricket"),
     seasonName: asString(asRecord(rawFixture.season).name, undefined),
     round: roundStr,
-    startingAt: asString(rawFixture.starting_at, new Date().toISOString()),
+    startingAt: toISTIsoString(asString(rawFixture.starting_at, new Date().toISOString())),
     status: rawStatus,
     note: asString(rawFixture.note) || null,
     venue: venueRaw.name ? {
@@ -359,8 +361,9 @@ export async function validateSportmonksFixtureById(
 
     const homeTeam = asString(local.name, "Local Team");
     const awayTeam = asString(visitor.name, "Visitor Team");
-    const scheduledStartTime = asString(raw.starting_at, new Date().toISOString());
-    const matchDate = scheduledStartTime.slice(0, 10);
+    const rawStartingAt = asString(raw.starting_at, new Date().toISOString());
+    const scheduledStartTime = toISTIsoString(rawStartingAt);
+    const matchDate = getISTDateString(rawStartingAt);
     const matchFormat = asString(raw.type, asString(league.name, "ODI"));
     const venueName = asString(venue.name, asString(raw.venue_name, "N/A"));
     const status = asString(raw.status, "NS");
@@ -377,7 +380,7 @@ export async function validateSportmonksFixtureById(
       venue: venueName,
       status,
       competition: asString(league.name, "International Cricket"),
-      verifiedAt: new Date().toISOString(),
+      verifiedAt: toISTIsoString(new Date()),
     });
 
     logger.info(`[MARKET] Fixture validated | fixtureId=${fixtureId} | ${homeTeam} vs ${awayTeam}`);
@@ -482,7 +485,7 @@ export async function prepareMarketCricketData(params: {
     ttlMs = 60 * 60 * 1000; // 1 hour for final matches
   }
 
-  const retrievedAt = new Date().toISOString();
+  const retrievedAt = toISTIsoString(new Date());
   fixtureDataCache.set(fixtureId, {
     match: result.match,
     retrievedAt,

@@ -1,6 +1,8 @@
 import {
   MarketMetadata,
   MarketMetadataSchema,
+  getISTDateString,
+  toISTIsoString,
   validateMarketResolutionHorizon,
 } from "@overwatch/shared";
 import { getAdminDb } from "../firebase-admin";
@@ -13,6 +15,39 @@ const MARKETS_COLLECTION = "markets";
 
 // Set to track deleted seeded market IDs in-memory so they don't re-appear in demo lists
 const deletedMarketIds = new Set<string>();
+
+function normalizeMarketTimestampsToIST(market: MarketMetadata): MarketMetadata {
+  const scheduledStartTime = toISTIsoString(market.scheduledStartTime);
+  return {
+    ...market,
+    matchDate: getISTDateString(market.scheduledStartTime || market.matchDate),
+    scheduledStartTime,
+    openingTime: toISTIsoString(market.openingTime),
+    expectedResolutionTime: toISTIsoString(market.expectedResolutionTime),
+    closingTime: toISTIsoString(market.closingTime || market.expectedResolutionTime),
+    createdAt: toISTIsoString(market.createdAt),
+    updatedAt: toISTIsoString(market.updatedAt),
+    resolutionContext: market.resolutionContext
+      ? {
+          ...market.resolutionContext,
+          scheduledStart: market.resolutionContext.scheduledStart
+            ? toISTIsoString(market.resolutionContext.scheduledStart)
+            : scheduledStartTime,
+        }
+      : undefined,
+    verifiedFixtureMeta: market.verifiedFixtureMeta
+      ? {
+          ...market.verifiedFixtureMeta,
+          startingAt: toISTIsoString(market.verifiedFixtureMeta.startingAt),
+          scheduledStartTime: market.verifiedFixtureMeta.scheduledStartTime
+            ? toISTIsoString(market.verifiedFixtureMeta.scheduledStartTime)
+            : toISTIsoString(market.verifiedFixtureMeta.startingAt),
+          matchDate: getISTDateString(market.verifiedFixtureMeta.startingAt),
+          verifiedAt: toISTIsoString(market.verifiedFixtureMeta.verifiedAt),
+        }
+      : undefined,
+  };
+}
 
 export async function getCanonicalMarketMetadata(
   marketId: string
@@ -28,7 +63,7 @@ export async function getCanonicalMarketMetadata(
     if (docSnap.exists) {
       const parsed = MarketMetadataSchema.safeParse(docSnap.data());
       if (parsed.success) {
-        return parsed.data;
+        return normalizeMarketTimestampsToIST(parsed.data);
       }
     }
   } catch (err) {
@@ -41,7 +76,7 @@ export async function getCanonicalMarketMetadata(
   // 2. Check in-memory seeded demo markets
   const seeded = getSeededMarketById(marketId);
   if (seeded) {
-    return seeded;
+    return normalizeMarketTimestampsToIST(seeded);
   }
 
   return null;
@@ -52,7 +87,7 @@ export async function listAllCanonicalMarkets(): Promise<MarketMetadata[]> {
   const byId = new Map<string, MarketMetadata>();
 
   for (const item of seeded) {
-    byId.set(item.marketId, item);
+    byId.set(item.marketId, normalizeMarketTimestampsToIST(item));
   }
 
   try {
@@ -62,7 +97,7 @@ export async function listAllCanonicalMarkets(): Promise<MarketMetadata[]> {
       if (deletedMarketIds.has(doc.id)) continue;
       const parsed = MarketMetadataSchema.safeParse(doc.data());
       if (parsed.success) {
-        byId.set(parsed.data.marketId, parsed.data);
+        byId.set(parsed.data.marketId, normalizeMarketTimestampsToIST(parsed.data));
       }
     }
   } catch (err) {
@@ -115,13 +150,13 @@ export async function createMarket(input: unknown): Promise<MarketMetadata> {
     }
   }
 
-  const nowIso = new Date().toISOString();
-  const finalRecord: MarketMetadata = {
+  const nowIso = toISTIsoString(new Date());
+  const finalRecord: MarketMetadata = normalizeMarketTimestampsToIST({
     ...validated,
     verifiedFixtureMeta,
     createdAt: nowIso,
     updatedAt: nowIso,
-  };
+  });
 
   const db = getAdminDb();
   await db.collection(MARKETS_COLLECTION).doc(finalRecord.marketId).set(finalRecord);

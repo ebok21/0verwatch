@@ -98,39 +98,62 @@ export function ExtensionSidePanelApp() {
   const isSimulatingRef = useRef<boolean>(false);
   const abortControllerRef = useRef<AbortController | null>(null);
   const seenNotifIdsRef = useRef<Set<string>>(new Set());
+  const notifCountRef = useRef<number>(0);
+  const lastNotifTimestampRef = useRef<number>(0);
 
-  const fireChromeNotification = useCallback((notif: NotificationRecord) => {
-    if (!notif?.notificationId || seenNotifIdsRef.current.has(notif.notificationId)) {
-      return;
-    }
-    seenNotifIdsRef.current.add(notif.notificationId);
-    const notifTitle = notif.title || "⚠️ 0verwatch Sentry Alert";
-    const notifMsg = notif.message || "Sentry detected a match development.";
-    try {
-      chrome.notifications?.create(notif.notificationId, {
-        type: "basic",
-        iconUrl:
-          "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
-        title: notifTitle,
-        message: notifMsg,
-        priority: 2,
-      });
-    } catch {
-      // Fallback to background script
-    }
-    try {
-      chrome.runtime
-        .sendMessage({
-          type: "OVERWATCH_TRIGGER_CHROME_NOTIFICATION",
-          notificationId: `${notif.notificationId}-bg`,
-          title: notifTitle,
-          message: notifMsg,
-        })
-        .catch(() => {});
-    } catch {
-      // Ignore
-    }
-  }, []);
+  const fireChromeNotification = useCallback(
+    (notif: NotificationRecord, options?: { bypassInterval?: boolean }) => {
+      if (!notif?.notificationId || seenNotifIdsRef.current.has(notif.notificationId)) {
+        return;
+      }
+      // Enforce max cap of 3 notifications
+      if (notifCountRef.current >= 3) {
+        seenNotifIdsRef.current.add(notif.notificationId);
+        return;
+      }
+      // Enforce 30-second spacing interval between notifications
+      const now = Date.now();
+      if (
+        !options?.bypassInterval &&
+        lastNotifTimestampRef.current > 0 &&
+        now - lastNotifTimestampRef.current < 30_000
+      ) {
+        return;
+      }
+
+      seenNotifIdsRef.current.add(notif.notificationId);
+      notifCountRef.current += 1;
+      lastNotifTimestampRef.current = now;
+
+      const notifTitle = notif.title || "⚠️ 0verwatch Sentry Alert";
+      const notifMsg = notif.message || "Sentry detected a match development.";
+
+      try {
+        chrome.runtime
+          .sendMessage({
+            type: "OVERWATCH_TRIGGER_CHROME_NOTIFICATION",
+            notificationId: notif.notificationId,
+            marketId: notif.marketId,
+            title: notifTitle,
+            message: notifMsg,
+            bypassInterval: Boolean(options?.bypassInterval),
+          })
+          .catch(() => {
+            chrome.notifications?.create(notif.notificationId, {
+              type: "basic",
+              iconUrl:
+                "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+              title: notifTitle,
+              message: notifMsg,
+              priority: 2,
+            });
+          });
+      } catch {
+        // Ignore
+      }
+    },
+    []
+  );
 
   const loadReadiness = useCallback(async () => {
     try {
@@ -248,15 +271,19 @@ export function ExtensionSidePanelApp() {
         setTrackedMarket(wData.trackedMarkets?.[0] ?? null);
       }
 
-      // 5. Notifications
+      // 5. Notifications (capped at 3 max, spaced 30s apart)
       if (nSettled.status === "fulfilled" && nSettled.value.ok) {
         const nData = await nSettled.value.json().catch(() => ({}));
         const allNotifs: NotificationRecord[] = nData.notifications ?? [];
         const marketNotifs = allNotifs.filter((n) => n.marketId === marketId);
-        const effectiveNotifs = marketNotifs.length > 0 ? marketNotifs : allNotifs;
+        const effectiveNotifs = (marketNotifs.length > 0 ? marketNotifs : allNotifs).slice(0, 3);
         setNotifications(effectiveNotifs);
-        if (effectiveNotifs[0] && !effectiveNotifs[0].acknowledged) {
-          fireChromeNotification(effectiveNotifs[0]);
+        const latest = effectiveNotifs[0];
+        if (latest && !latest.acknowledged) {
+          const ageMs = Date.now() - new Date(latest.createdAt).getTime();
+          if (ageMs <= 35_000) {
+            fireChromeNotification(latest);
+          }
         }
       }
     } catch (err: any) {
@@ -352,6 +379,10 @@ export function ExtensionSidePanelApp() {
       if (msg?.type === "OVERWATCH_ACTIVE_TAB_UPDATED") {
         void refreshCurrentTab();
       } else if (msg?.type === "OVERWATCH_DEMO_POSITION_EVENT") {
+        if (msg.action === "OPEN") {
+          notifCountRef.current = 0;
+          lastNotifTimestampRef.current = 0;
+        }
         const mid = identifierRef.current?.marketId;
         if (mid) {
           void loadMarketData(mid, true);
@@ -574,6 +605,18 @@ export function ExtensionSidePanelApp() {
     setPosition(null);
     setTrackedMarket(null);
     setNotifications([]);
+    notifCountRef.current = 0;
+    lastNotifTimestampRef.current = 0;
+    try {
+      chrome.runtime
+        .sendMessage({
+          type: "OVERWATCH_RESET_NOTIFICATION_CAP",
+          clearDeliveredIds: false,
+        })
+        .catch(() => {});
+    } catch {
+      // Ignore
+    }
 
     try {
       // STAGE 1: Simulated Live Match Recon (with Radar HUD)
@@ -665,42 +708,8 @@ export function ExtensionSidePanelApp() {
       }
       setPosition(null);
       if (shockData.notification) {
-        setNotifications((prev) => [shockData.notification, ...prev]);
-
-        // Fire Native Chrome OS Notification via both direct API and Background Service Worker
-        const notifId = shockData.notification.notificationId || `sim-notif-${Date.now()}`;
-        const notifTitle =
-          shockData.notification.title ||
-          "⚠️ 0verwatch Sentry Alert [POSITION_THESIS_WEAKENED]";
-        const notifMsg =
-          shockData.notification.message ||
-          "CRITICAL MATCH SHOCK (Over 16.4): India collapsed from 89/1 to 94/4! Win probability dropped 68% → 38%.";
-
-        try {
-          chrome.notifications?.create(notifId, {
-            type: "basic",
-            iconUrl:
-              "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
-            title: notifTitle,
-            message: notifMsg,
-            priority: 2,
-          });
-        } catch {
-          // Fallback to background script
-        }
-
-        try {
-          chrome.runtime
-            .sendMessage({
-              type: "OVERWATCH_TRIGGER_CHROME_NOTIFICATION",
-              notificationId: `${notifId}-bg`,
-              title: notifTitle,
-              message: notifMsg,
-            })
-            .catch(() => {});
-        } catch {
-          // Ignore
-        }
+        setNotifications((prev) => [shockData.notification, ...prev].slice(0, 3));
+        fireChromeNotification(shockData.notification, { bypassInterval: true });
       }
 
       setSimulationBanner(
@@ -730,6 +739,19 @@ export function ExtensionSidePanelApp() {
         method: "POST",
       });
       if (res.ok) {
+        seenNotifIdsRef.current.clear();
+        notifCountRef.current = 0;
+        lastNotifTimestampRef.current = 0;
+        try {
+          chrome.runtime
+            .sendMessage({
+              type: "OVERWATCH_RESET_NOTIFICATION_CAP",
+              clearDeliveredIds: true,
+            })
+            .catch(() => {});
+        } catch {
+          // Ignore
+        }
         setReport(null);
         setPosition(null);
         setTrackedMarket(null);

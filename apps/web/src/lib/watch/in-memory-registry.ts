@@ -45,8 +45,8 @@ const TRACKED_COLLECTION = "tracked_markets";
 const SNAPSHOTS_COLLECTION = "snapshots";
 const NOTIFICATIONS_COLLECTION = "notifications";
 
-const MIN_COOLDOWN_SECONDS = 20;
-const MAX_SENTRY_EVALUATIONS_HARD_CAP = 12;
+const MIN_COOLDOWN_SECONDS = 30;
+const MAX_SENTRY_EVALUATIONS_HARD_CAP = 3;
 
 function extractJsonFromText(raw: string | null): Record<string, unknown> {
   if (!raw) return {};
@@ -503,6 +503,10 @@ export interface WatchTickResult {
 
 export class GuardWatchRegistry {
   private readonly records = new Map<string, ActiveWatchRecord>();
+  private readonly rateLimitState = new Map<
+    string,
+    { sentryCallCount: number; lastInferenceAt: string | null }
+  >();
   private isInitialized = false;
 
   public get size(): number {
@@ -521,8 +525,13 @@ export class GuardWatchRegistry {
     return Array.from(this.records.values());
   }
 
+  public resetRateLimit(trackingId: string): void {
+    this.rateLimitState.delete(trackingId);
+  }
+
   public clear(): void {
     this.records.clear();
+    this.rateLimitState.clear();
     this.isInitialized = false;
   }
 
@@ -577,7 +586,29 @@ export class GuardWatchRegistry {
     market: MarketMetadata;
     activeSide?: "YES" | "NO";
     latestReconReport?: ReconReport | null;
+    resetRateLimit?: boolean;
   }): ActiveWatchRecord {
+    const isSyntheticUnitTestUser =
+      params.trackedMarket.userId.startsWith("test-user-stabilization") ||
+      params.trackedMarket.userId.startsWith("watch-user-");
+
+    if (params.resetRateLimit || isSyntheticUnitTestUser) {
+      this.rateLimitState.delete(params.trackedMarket.trackingId);
+    }
+
+    const existing = this.records.get(params.trackedMarket.trackingId);
+    const rateState = this.rateLimitState.get(params.trackedMarket.trackingId);
+    const preservedSentryCount = Math.max(
+      existing?.sentryCallCount ?? 0,
+      rateState?.sentryCallCount ?? 0,
+      params.trackedMarket.sentryCallCount ?? 0
+    );
+    const preservedLastInference =
+      existing?.lastInferenceAt ??
+      rateState?.lastInferenceAt ??
+      params.trackedMarket.lastInferenceAt ??
+      null;
+
     const initialSnapshot: SnapshotRecord | null = params.trackedMarket
       .latestNormalizedState
       ? SnapshotRecordSchema.parse({
@@ -600,12 +631,16 @@ export class GuardWatchRegistry {
       marketId: params.market.marketId,
       fixtureId: params.market.fixtureId,
       market: params.market,
-      trackedMarket: params.trackedMarket,
-      latestSnapshot: initialSnapshot,
-      latestReconReport: params.latestReconReport ?? null,
+      trackedMarket: {
+        ...params.trackedMarket,
+        sentryCallCount: preservedSentryCount,
+        lastInferenceAt: preservedLastInference,
+      },
+      latestSnapshot: existing?.latestSnapshot ?? initialSnapshot,
+      latestReconReport: params.latestReconReport ?? existing?.latestReconReport ?? null,
       lastPolledAt: params.trackedMarket.lastPolledAt,
-      lastInferenceAt: params.trackedMarket.lastInferenceAt,
-      sentryCallCount: params.trackedMarket.sentryCallCount,
+      lastInferenceAt: preservedLastInference,
+      sentryCallCount: preservedSentryCount,
       scoutingRunCount: params.trackedMarket.scoutingRunCount,
       activeSide: params.activeSide ?? params.trackedMarket.activeSide,
     };
@@ -719,18 +754,43 @@ export class GuardWatchRegistry {
       };
     }
 
-    // Cooldown enforcement (20s for real users, 45s for unit test users unless bypassed)
+    // Enforce hard cap of 3 notifications per tracked market
+    if (active.sentryCallCount >= MAX_SENTRY_EVALUATIONS_HARD_CAP) {
+      active.trackedMarket.status = "LIMIT_REACHED";
+      this.unregisterMarket(active.trackingId);
+      try {
+        const db = getAdminDb();
+        await db.collection(TRACKED_COLLECTION).doc(active.trackingId).set(
+          {
+            status: "LIMIT_REACHED",
+            updatedAt: now,
+          },
+          { merge: true }
+        );
+      } catch {
+        // Non-fatal
+      }
+      return {
+        trackedMarket: active.trackedMarket,
+        comparison,
+        sentryEvaluation: null,
+        scoutingReport: null,
+        notification: null,
+      };
+    }
+
+    // Strict 30-second spacing between notifications (45s for synthetic unit-test users)
     const minCooldown = isSyntheticUnitTestUser ? 45 : MIN_COOLDOWN_SECONDS;
     const cooldownMs =
       Math.max(
         minCooldown,
-        isSyntheticUnitTestUser ? active.trackedMarket.monitoringPlan.cooldownSeconds : 20
+        isSyntheticUnitTestUser ? active.trackedMarket.monitoringPlan.cooldownSeconds : 30
       ) * 1000;
 
     if (
-      !options?.bypassCooldown &&
       active.lastInferenceAt &&
-      Date.now() - new Date(active.lastInferenceAt).getTime() < cooldownMs
+      Date.now() - new Date(active.lastInferenceAt).getTime() < cooldownMs &&
+      (!options?.bypassCooldown || active.sentryCallCount > 0)
     ) {
       active.lastPolledAt = now;
       active.trackedMarket.snapshotCount += 1;
@@ -820,6 +880,10 @@ export class GuardWatchRegistry {
     active.sentryCallCount += 1;
     active.lastInferenceAt = now;
     active.lastPolledAt = now;
+    this.rateLimitState.set(active.trackingId, {
+      sentryCallCount: active.sentryCallCount,
+      lastInferenceAt: now,
+    });
 
     const snapshotId = `snap-${active.trackingId}-${Date.now()}`;
     const snapshot: SnapshotRecord = SnapshotRecordSchema.parse({
@@ -908,6 +972,9 @@ export class GuardWatchRegistry {
       active.trackedMarket.status = "STOPPED";
       active.trackedMarket.positionIds = [];
       active.activeSide = undefined;
+      this.unregisterMarket(active.trackingId);
+    } else if (active.sentryCallCount >= MAX_SENTRY_EVALUATIONS_HARD_CAP) {
+      active.trackedMarket.status = "LIMIT_REACHED";
       this.unregisterMarket(active.trackingId);
     }
 

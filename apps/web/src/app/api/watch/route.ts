@@ -149,11 +149,11 @@ export async function POST(req: NextRequest) {
       activeSide: parsed.activeSide,
     });
 
-    // Run immediate baseline Sentry evaluation
+    // Run initial Sentry evaluation only if no evaluation has run yet for this tracked market
     const activeRec = guardWatchRegistry.get(trackedMarket.trackingId);
-    if (activeRec) {
+    if (activeRec && activeRec.sentryCallCount === 0) {
       try {
-        await guardWatchRegistry.runTickForRecord(activeRec, { bypassCooldown: true });
+        await guardWatchRegistry.runTickForRecord(activeRec, { bypassCooldown: false });
       } catch {
         // Non-fatal
       }

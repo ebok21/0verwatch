@@ -35,8 +35,8 @@ export type { ActiveWatchRecord, WatchTickResult };
 const TRACKED_COLLECTION = "tracked_markets";
 const SNAPSHOTS_COLLECTION = "snapshots";
 
-const MIN_COOLDOWN_SECONDS = 45;
-const MAX_SENTRY_EVALUATIONS_HARD_CAP = 6;
+const MIN_COOLDOWN_SECONDS = 30;
+const MAX_SENTRY_EVALUATIONS_HARD_CAP = 3;
 const MAX_SCOUTING_RUNS_HARD_CAP = 2;
 const LEASE_DURATION_MS = 60_000;
 
@@ -52,9 +52,18 @@ export async function createOrUpdateTrackedMarket(params: {
   latestReconReport: ReconReport;
   authorizedBackgroundInference: boolean;
   activeSide?: "YES" | "NO";
+  resetRateLimit?: boolean;
 }): Promise<TrackedMarket> {
   const trackingId = `watch-${params.userId}-${params.market.marketId}`;
   const now = new Date().toISOString();
+
+  if (params.resetRateLimit) {
+    guardWatchRegistry.resetRateLimit(trackingId);
+  }
+
+  const existingActive = params.resetRateLimit
+    ? undefined
+    : guardWatchRegistry.get(trackingId);
 
   const initialEvent: GuardWatchEvent = {
     eventId: `evt-${Date.now()}`,
@@ -70,7 +79,10 @@ export async function createOrUpdateTrackedMarket(params: {
     fixtureId: params.market.fixtureId,
     question: params.market.question,
     platform: "demo",
-    status: "WATCHING",
+    status:
+      existingActive && existingActive.sentryCallCount >= MAX_SENTRY_EVALUATIONS_HARD_CAP
+        ? "LIMIT_REACHED"
+        : "WATCHING",
     authorizedBackgroundInference: params.authorizedBackgroundInference,
     activeSide: params.activeSide ?? "YES",
     monitoringPlan: {
@@ -89,15 +101,15 @@ export async function createOrUpdateTrackedMarket(params: {
       ),
     },
     latestReconRunId: params.latestReconReport.runId,
-    sentryCallCount: 0,
-    scoutingRunCount: 0,
-    snapshotCount: 0,
-    lastPolledAt: null,
-    lastInferenceAt: null,
+    sentryCallCount: existingActive?.sentryCallCount ?? 0,
+    scoutingRunCount: existingActive?.scoutingRunCount ?? 0,
+    snapshotCount: existingActive?.trackedMarket.snapshotCount ?? 0,
+    lastPolledAt: existingActive?.lastPolledAt ?? null,
+    lastInferenceAt: existingActive?.lastInferenceAt ?? null,
     leaseOwner: null,
     leaseExpiresAt: null,
-    recentEvents: [initialEvent],
-    createdAt: now,
+    recentEvents: existingActive?.trackedMarket.recentEvents ?? [initialEvent],
+    createdAt: existingActive?.trackedMarket.createdAt ?? now,
     updatedAt: now,
   });
 
@@ -110,22 +122,23 @@ export async function createOrUpdateTrackedMarket(params: {
   record.latestNormalizedState = snapshot.normalizedState;
   await db.collection(TRACKED_COLLECTION).doc(trackingId).set(record);
 
-  guardWatchRegistry.registerMarket({
+  const registered = guardWatchRegistry.registerMarket({
     trackedMarket: record,
     market: params.market,
     activeSide: params.activeSide,
     latestReconReport: params.latestReconReport,
+    resetRateLimit: params.resetRateLimit,
   });
 
   ensureInProcessWatcherStarted();
 
   void notifyWorkerOfTrackUpdate({
     action: "TRACK",
-    trackingId: record.trackingId,
-    trackedMarket: record,
+    trackingId: registered.trackingId,
+    trackedMarket: registered.trackedMarket,
   });
 
-  return record;
+  return registered.trackedMarket;
 }
 
 export async function captureSnapshotForTrackedMarket(params: {

@@ -28,12 +28,20 @@ export async function GET(req: NextRequest) {
     }
 
     const snap = await query.get();
-    const notifications = snap.docs
+    const sorted = snap.docs
       .map((d) => NotificationRecordSchema.safeParse(d.data()))
       .filter((r) => r.success)
       .map((r) => r.data)
-      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
-      .slice(0, 25);
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+
+    // Cap to at most 3 notifications per market (and 6 overall)
+    const countByMarket = new Map<string, number>();
+    const notifications = sorted.filter((n) => {
+      const c = countByMarket.get(n.marketId) ?? 0;
+      if (c >= 3) return false;
+      countByMarket.set(n.marketId, c + 1);
+      return true;
+    }).slice(0, 6);
 
     return jsonResponse({ notifications });
   } catch (err) {

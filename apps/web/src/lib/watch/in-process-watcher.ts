@@ -53,17 +53,12 @@ export async function runInProcessSweep(options?: {
  * Ensures the recurring in-process Guard Watch sweep loop is active.
  * Replaces the need for a separate standalone worker process.
  */
-export function ensureInProcessWatcherStarted(intervalMs = 20000): void {
+export function ensureInProcessWatcherStarted(intervalMs = 30000): void {
   if (watcherInterval) return;
 
   logger.info(
     `[GUARD] In-process Guard Watch loop started (tick interval: ${intervalMs / 1000}s)`
   );
-
-  // Initial sweep shortly after activation
-  setTimeout(() => {
-    void runInProcessSweep();
-  }, 1000);
 
   watcherInterval = setInterval(() => {
     void runInProcessSweep();

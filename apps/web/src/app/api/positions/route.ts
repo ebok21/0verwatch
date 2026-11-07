@@ -134,6 +134,7 @@ export async function POST(req: NextRequest) {
           latestReconReport: latestReport,
           authorizedBackgroundInference: true,
           activeSide: body.side,
+          resetRateLimit: true,
         });
 
         // Trigger immediate baseline Sentry sweep for the freshly registered trade

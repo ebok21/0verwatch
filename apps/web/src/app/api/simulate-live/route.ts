@@ -346,6 +346,16 @@ export async function POST(req: NextRequest) {
     }
 
     if (body.step === "SHOCK") {
+      // Liquidate open paper positions as an autonomous Sentry Stop-Loss
+      const openPositions = await listPaperPositions({
+        userId: user.userId,
+        marketId: market.marketId,
+        status: "OPEN",
+      });
+      for (const pos of openPositions) {
+        await closePaperPosition(pos.positionId, user.userId);
+      }
+
       const trackingId = `watch-${user.userId}-${market.marketId}`;
       const db = getAdminDb();
       const docRef = db.collection("tracked_markets").doc(trackingId);
@@ -360,16 +370,17 @@ export async function POST(req: NextRequest) {
         runRate: 5.64,
       };
 
-      const alertTitle = `⚠️ Sentry Alert [POSITION_THESIS_WEAKENED] • ${market.marketId}`;
+      const alertTitle = `🛑 SENTRY STOP-LOSS LIQUIDATED ($100 YES) • ${market.marketId}`;
       const alertSummary =
-        "CRITICAL MATCH SHOCK (Over 16.4): India collapsed from 89/1 to 94/4 — Gill (49), Kohli (29), and Iyer (0) dismissed in 14 balls! Live win probability plunged from 68% → 38%, severely threatening your $100 YES position.";
+        "🛑 AUTO STOP-LOSS EXECUTED (Over 16.4): India collapsed from 89/1 to 94/4 — Gill (49), Kohli (29), and Iyer (0) dismissed in 14 balls! Live win probability plunged from 68% → 38%. Sentry automatically liquidated your $100 YES position to protect capital.";
 
       const sentryEvent: GuardWatchEvent = {
         eventId: `evt-sim-shock-${Date.now()}`,
         timestamp: now,
         type: "SENTRY_DECISION",
-        summary: `Sentry [POSITION_THESIS_WEAKENED]: ${alertSummary}`,
-        sentryDecision: "NOTIFY_ONLY",
+        summary: alertSummary,
+        sentryDecision: "LIQUIDATE_POSITION",
+        alertCategory: "POSITION_THESIS_WEAKENED",
         requestId: `sim-sentry-${Date.now()}`,
       };
 

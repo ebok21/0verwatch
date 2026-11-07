@@ -458,6 +458,7 @@ export type SnapshotComparisonResult = z.infer<
 export const SentryDecisionTypeSchema = z.enum([
   "NO_ACTION",
   "NOTIFY_ONLY",
+  "LIQUIDATE_POSITION",
   "REQUEST_MORE_DATA",
   "TRIGGER_RESEARCH",
   "INSUFFICIENT_DATA",
@@ -481,6 +482,10 @@ export const SentryEvaluationSchema = z.object({
   severity: z.enum(["LOW", "MEDIUM", "HIGH", "CRITICAL"]),
   summary: z.string().min(1),
   reasoning: z.string().min(1),
+  shouldLiquidate: z.boolean().optional(),
+  updatedAssessment: ReconAssessmentSchema.optional(),
+  updatedYesProbability: z.number().min(0).max(100).nullable().optional(),
+  liquidatedPositionIds: z.array(z.string()).optional(),
   requestedTool: z
     .object({
       operation: ToolOperationNameSchema,

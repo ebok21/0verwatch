@@ -97,6 +97,40 @@ export function ExtensionSidePanelApp() {
   const isLoadingMarketRef = useRef<boolean>(false);
   const isSimulatingRef = useRef<boolean>(false);
   const abortControllerRef = useRef<AbortController | null>(null);
+  const seenNotifIdsRef = useRef<Set<string>>(new Set());
+
+  const fireChromeNotification = useCallback((notif: NotificationRecord) => {
+    if (!notif?.notificationId || seenNotifIdsRef.current.has(notif.notificationId)) {
+      return;
+    }
+    seenNotifIdsRef.current.add(notif.notificationId);
+    const notifTitle = notif.title || "⚠️ 0verwatch Sentry Alert";
+    const notifMsg = notif.message || "Sentry detected a match development.";
+    try {
+      chrome.notifications?.create(notif.notificationId, {
+        type: "basic",
+        iconUrl:
+          "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+        title: notifTitle,
+        message: notifMsg,
+        priority: 2,
+      });
+    } catch {
+      // Fallback to background script
+    }
+    try {
+      chrome.runtime
+        .sendMessage({
+          type: "OVERWATCH_TRIGGER_CHROME_NOTIFICATION",
+          notificationId: `${notif.notificationId}-bg`,
+          title: notifTitle,
+          message: notifMsg,
+        })
+        .catch(() => {});
+    } catch {
+      // Ignore
+    }
+  }, []);
 
   const loadReadiness = useCallback(async () => {
     try {
@@ -217,7 +251,13 @@ export function ExtensionSidePanelApp() {
       // 5. Notifications
       if (nSettled.status === "fulfilled" && nSettled.value.ok) {
         const nData = await nSettled.value.json().catch(() => ({}));
-        setNotifications(nData.notifications ?? []);
+        const allNotifs: NotificationRecord[] = nData.notifications ?? [];
+        const marketNotifs = allNotifs.filter((n) => n.marketId === marketId);
+        const effectiveNotifs = marketNotifs.length > 0 ? marketNotifs : allNotifs;
+        setNotifications(effectiveNotifs);
+        if (effectiveNotifs[0] && !effectiveNotifs[0].acknowledged) {
+          fireChromeNotification(effectiveNotifs[0]);
+        }
       }
     } catch (err: any) {
       if (err?.name !== "AbortError") {
@@ -451,7 +491,7 @@ export function ExtensionSidePanelApp() {
     setIsRunningTick(true);
     try {
       if (trackedMarket) {
-        await fetch(`${API_BASE_URL}/api/watch`, {
+        const res = await fetch(`${API_BASE_URL}/api/watch`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -460,6 +500,18 @@ export function ExtensionSidePanelApp() {
             bypassCooldown: true,
           }),
         });
+        if (res.ok) {
+          const tickData = await res.json().catch(() => ({}));
+          if (tickData.trackedMarket) setTrackedMarket(tickData.trackedMarket);
+          if (tickData.scoutingReport) setReport(tickData.scoutingReport);
+          if (tickData.notification) {
+            setNotifications((prev) => [tickData.notification, ...prev]);
+            fireChromeNotification(tickData.notification);
+          }
+          if (tickData.sentryEvaluation?.shouldLiquidate) {
+            setPosition(null);
+          }
+        }
       } else if (identifier?.marketId) {
         await fetch(`${API_BASE_URL}/api/watch`, {
           method: "POST",
@@ -611,6 +663,7 @@ export function ExtensionSidePanelApp() {
       if (shockData.report) {
         setReport(shockData.report);
       }
+      setPosition(null);
       if (shockData.notification) {
         setNotifications((prev) => [shockData.notification, ...prev]);
 

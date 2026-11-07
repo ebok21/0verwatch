@@ -60,7 +60,7 @@ cre-gcp-prediction-market-demo/
 └── extension/                        # [NEW] Overwatch Chrome Extension (Manifest V3)
     ├── manifest.json
     └── src/
-        ├── adapters/                       # URL-first DemoMarketAdapter (DOM fallback) & Polymarket stub
+        ├── adapters/                       # URL-first DemoMarketAdapter (with DOM fallback)
         ├── background/service-worker.ts    # Side panel behavior, chrome.alarms & chrome.notifications
         ├── content/index.ts                # Optional DOM fallback extractor
         └── sidepanel/                      # React UI (Recon report, Evidence sources, Guard Watch, 0G setup)
